@@ -44,26 +44,26 @@ const userDb = korm.layers.pg(process.env.PG_URL!);
 const docsDb = korm.layers.mysql(process.env.MYSQL_URL!);
 
 // Depots (local or S3-compatible)
-const invoiceDepot = korm.depot.s3({
+const invoiceDepot = korm.depots.s3({
   bucket: "invoices",
   endpoint: process.env.S3_ENDPOINT!,
   accessKeyId: process.env.S3_ACCESS_KEY_ID!,
   secretAccessKey: process.env.S3_SECRET_ACCESS_KEY!
 });
-const walDepot = korm.depot.local("./wal");
+const walDepot = korm.depots.local("./wal");
 
 // Pool (layers + depots + optional shared locks + optional WAL)
 const pool = korm.pool()
   .setLayers(
-    { layer: carDb, ident: "cardb" },
-    { layer: userDb, ident: "userdb" },
-    { layer: docsDb, ident: "docsdb" }
+    korm.use.layer(carDb).as("cardb"),
+    korm.use.layer(userDb).as("userdb"),
+    korm.use.layer(docsDb).as("docsdb")
   )
-  .withMeta({ layerIdent: "cardb" }) // optional unless you want backups; stores pool metadata for mismatch detection & discovery
-  .withLocks({ layerIdent: "cardb" }) // optional: shared locks across processes
+  .withMeta(korm.target.layer("cardb")) // optional unless you want backups; stores pool metadata for mismatch detection & discovery
+  .withLocks(korm.target.layer("cardb")) // optional: shared locks across processes
   .setDepots(
-    { depot: invoiceDepot, ident: "invoiceDepot" },
-    { depot: walDepot, ident: "walDepot" }
+    korm.use.depot(invoiceDepot).as("invoiceDepot"),
+    korm.use.depot(walDepot).as("walDepot")
   )
   .withWal({ depotIdent: "walDepot", walNamespace: "demo", retention: "keep", depotOps: "record" })
   .open();
@@ -124,7 +124,7 @@ console.log(cars[0]?.data?.owner.firstName); // fully typed
 await pool.close();
 ```
 
-Use `korm.depot.s3(...)` and `korm.depot.local(...)` for depot creation.
+Use `korm.depots.s3(...)` and `korm.depots.local(...)` for depot creation.
 
 ## Examples
 
@@ -176,11 +176,11 @@ A pool aggregates data layers and depots:
 ```ts
 const pool = korm.pool()
   .setLayers(
-    { layer: korm.layers.sqlite("./db.sqlite"), ident: "sqlite" },
-    { layer: korm.layers.pg(process.env.PG_URL!), ident: "pg" }
+    korm.use.layer(korm.layers.sqlite("./db.sqlite")).as("sqlite"),
+    korm.use.layer(korm.layers.pg(process.env.PG_URL!)).as("pg")
   )
   .setDepots(
-    { depot: korm.depot.local("./files"), ident: "files" }
+    korm.use.depot(korm.depots.local("./files")).as("files")
   )
   .open();
 ```
@@ -276,11 +276,11 @@ Depots store files and are accessed via depot RNs.
 
 ### Depot types
 
-Use the `korm.depot` helpers:
+Use the `korm.depots` helpers:
 
 ```ts
-const localDepot = korm.depot.local("./files");
-const s3Depot = korm.depot.s3({
+const localDepot = korm.depots.local("./files");
+const s3Depot = korm.depots.s3({
   bucket: "my-bucket",
   endpoint: "https://minio.local",
   accessKeyId: "...",
@@ -288,7 +288,7 @@ const s3Depot = korm.depot.s3({
 });
 ```
 
-`korm.depot.s3(...)` supports any S3-compatible endpoint and accepts:
+`korm.depots.s3(...)` supports any S3-compatible endpoint and accepts:
 - `bucket` (required; korm will create this for you if it doesn't exist)
 - `endpoint`
 - `region`
@@ -396,8 +396,8 @@ If you run multiple processes that share the same pool, enable shared locks to p
 
 ```ts
 const pool = korm.pool()
-  .setLayers({ layer: carDb, ident: "cardb" })
-  .withLocks({ layerIdent: "cardb" })
+  .setLayers(korm.use.layer(carDb).as("cardb"))
+  .withLocks(korm.target.layer("cardb"))
   .open();
 ```
 
@@ -409,8 +409,8 @@ If you want korm to detect mismatched configurations across processes, enable po
 
 ```ts
 const pool = korm.pool()
-  .setLayers({ layer: carDb, ident: "cardb" })
-  .withMeta({ layerIdent: "cardb" })
+  .setLayers(korm.use.layer(carDb).as("cardb"))
+  .withMeta(korm.target.layer("cardb"))
   .open();
 ```
 
@@ -431,8 +431,8 @@ WAL is optional and undo/redo (undo then retry).
 
 ```ts
 const pool = korm.pool()
-  .setLayers({ layer: carDb, ident: "cardb" })
-  .setDepots({ depot: walDepot, ident: "walDepot" })
+  .setLayers(korm.use.layer(carDb).as("cardb"))
+  .setDepots(korm.use.depot(walDepot).as("walDepot"))
   .withWal({
     depotIdent: "walDepot",
     walNamespace: "demo",
@@ -468,9 +468,9 @@ Backups are stored as JSON files under the depot RN prefix `__korm_backups__:{la
 
 ```ts
 const pool = korm.pool()
-  .setLayers({ layer: carDb, ident: "cardb" })
-  .setDepots({ depot: backupDepot, ident: "backups" })
-  .withMeta({ layerIdent: "cardb" })
+  .setLayers(korm.use.layer(carDb).as("cardb"))
+  .setDepots(korm.use.depot(backupDepot).as("backups"))
+  .withMeta(korm.target.layer("cardb"))
   .backups("backups")
     .addInterval("*", korm.interval.every("day").at(2, 0))
     .retain(7).days() // prune backups older than 7 days
@@ -493,9 +493,9 @@ import { BackMan } from "@fkws/korm";
 
 const manager = new BackMan();
 const pool = korm.pool()
-  .setLayers({ layer: restoreDb, ident: "restore" })
-  .setDepots({ depot: backupDepot, ident: "backups" })
-  .withMeta({ layerIdent: "restore" })
+  .setLayers(korm.use.layer(restoreDb).as("restore"))
+  .setDepots(korm.use.depot(backupDepot).as("backups"))
+  .withMeta(korm.target.layer("restore"))
   .open();
 
 pool.configureBackups("backups", manager);
@@ -544,6 +544,8 @@ fish -lc "bun run test:integration"
 - `korm.encrypt(value)` / `korm.password(value)`
 - `korm.tx(...items)` -> Tx builder
 - `korm.pool()` -> Pool builder (`setLayers`, `setDepots`, `withMeta`, `withLocks`, `withWal`, `backups`, `open`)
+- `korm.use.layer(layer).as(ident)` / `korm.use.depot(depot).as(ident)` -> Named pool entries
+- `korm.target.layer(ident)` -> Pool layer target for `withMeta` / `withLocks`
 - `BackMan` -> backups manager (scheduling + restore with `play`)
 - `korm.discover(layer)` -> Discover a pool from metadata stored in a layer
 - `korm.danger.reset(pool, { mode })` -> Drop korm-managed data (`mode`: `"all" | "layers" | "depots" | "meta" | "meta only"`)
@@ -571,8 +573,8 @@ fish -lc "bun run test:integration"
 
 ### Depots
 
-- `korm.depot.local(rootPath)`
-- `korm.depot.s3(options)`
+- `korm.depots.local(rootPath)`
+- `korm.depots.s3(options)`
 
 ### WAL options
 
@@ -596,21 +598,21 @@ backups(depotIdent?)
 ### Pool metadata options
 
 ```ts
-withMeta({
-  layerIdent: string;
-})
+withMeta(korm.target.layer("layerIdent"))
 ```
 
 ### Lock options
 
 ```ts
-withLocks({
-  layerIdent: string;
-  ttlMs?: number;
-  retryMs?: number;
-  refreshMs?: number;
-  ownerId?: string;
-})
+withLocks(
+  korm.target.layer("layerIdent"),
+  {
+    ttlMs?: number;
+    retryMs?: number;
+    refreshMs?: number;
+    ownerId?: string;
+  }
+)
 ```
 
 Legacy `korm.pool(..., { walMode, lockMode, metaMode })` is still supported.
