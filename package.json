@@ -4,6 +4,9 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
+  "repository": {
+    "url": "https://github.com/klar-web-services/korm"
+  },
   "private": false,
   "exports": {
     ".": {
