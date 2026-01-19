@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
@@ -38,6 +38,8 @@ function loadEnvIfMissing(): void {
 }
 
 loadEnvIfMissing();
+
+setDefaultTimeout(20_000);
 
 const { layerPool, sqll, pg, mysql, localDepot, s3Depot } = await import("./layerDefs");
 const { eq, and, gt, not, or, like, inList } = korm.qfns;
@@ -458,7 +460,7 @@ async function waitForBackupPayloads(
 beforeAll(async () => {
     await clearAllDatabases();
     await clearAllDepots();
-});
+}, { timeout: 30_000 });
 
 async function queryItems<T extends JSONable>(
     ident: LayerIdent,
@@ -2346,4 +2348,4 @@ afterAll(async () => {
     await pg._db.end({ timeout: 1 });
     await mysql._pool.end();
     sqll._db.close();
-});
+}, { timeout: 30_000 });
