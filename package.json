@@ -4,7 +4,7 @@
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "type": "module",
-  "private": true,
+  "private": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -28,6 +28,9 @@
   "bin": {
     "generate-encryption-key": "./scripts/generate_encryption_key.js"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "files": ["dist", "src", "scripts", "examples", "README.md"],
   "peerDependencies": {
     "typescript": "^5"
@@ -35,6 +38,6 @@
   "dependencies": {
     "@fkws/klonk-result": "^0.0.3",
     "argon2": "^0.44.0",
-    "mysql2": "^3.16.0",
+    "mysql2": "^3.16.0"
   }
 }
