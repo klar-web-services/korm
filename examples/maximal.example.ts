@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import {
     korm,
     BackMan,
@@ -21,7 +22,8 @@ import {
 const { eq, and, or, gt } = korm.qfns; // Extract query functions for easier use later on
 
 // I am using a sqlite db to hold my Car data
-const carDb = korm.layers.sqlite("/home/fkws/workspaces/kws/klonk-orm/src/testing/test.sqlite");
+const sqlitePath = resolve(import.meta.dir, "../src/testing/test.sqlite");
+const carDb = korm.layers.sqlite(sqlitePath);
 
 // And a PG database to hold user data
 const userDb = korm.layers.pg(process.env.PG_URL!)
@@ -38,7 +40,8 @@ export const invoiceDepot = korm.depot.s3({
 })
 
 // Let's store WAL records in a local depot (we could also use the same depot as above or a different s3 depot):
-const walDepot = korm.depot.local("/home/fkws/workspaces/kws/klonk-orm/src/testing/wal");
+const walDepotPath = resolve(import.meta.dir, "../src/testing/wal");
+const walDepot = korm.depot.local(walDepotPath);
 
 // These source layers are my layer pool
 const pool = korm.pool()

@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { SqliteLayer } from "../sources/layers/sqlite";
 import { PgLayer } from "../sources/layers/pg";
 import { MysqlLayer } from "../sources/layers/mysql";
@@ -5,12 +6,13 @@ import { korm } from "../korm";
 import { S3Depot } from "../depot/depots/s3Depot";
 import { LocalDepot } from "../depot/depots/localDepot";
 
-export const sqll = new SqliteLayer('/home/fkws/workspaces/kws/klonk-orm/src/testing/test.sqlite');
+const sqlitePath = resolve(import.meta.dir, "test.sqlite");
+export const sqll = new SqliteLayer(sqlitePath);
 export const pg = new PgLayer(process.env.TESTING_PG_URL!);
 export const mysql = new MysqlLayer(process.env.TESTING_MYSQL_URL!);
 
 export const localDepot = new LocalDepot(
-    "/home/fkws/workspaces/kws/klonk-orm/src/testing/bucket"
+    resolve(import.meta.dir, "bucket")
 );
 
 export const s3Depot = new S3Depot({

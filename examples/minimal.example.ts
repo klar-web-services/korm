@@ -1,7 +1,9 @@
+import { resolve } from "node:path";
 import { korm, type RN } from "..";
 
 // Single-layer pool: no WAL, backups, depots, or federation needed.
-const carDb = korm.layers.sqlite("/home/fkws/workspaces/kws/klonk-orm/src/testing/test.sqlite");
+const sqlitePath = resolve(import.meta.dir, "../src/testing/test.sqlite");
+const carDb = korm.layers.sqlite(sqlitePath);
 const pool = korm.pool()
     .setLayers({ layer: carDb, ident: "cardb" })
     .open();
