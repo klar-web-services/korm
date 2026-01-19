@@ -1,0 +1,33 @@
+import { SqliteLayer } from "../sources/layers/sqlite";
+import { PgLayer } from "../sources/layers/pg";
+import { MysqlLayer } from "../sources/layers/mysql";
+import { korm } from "../korm";
+import { S3Depot } from "../depot/depots/s3Depot";
+import { LocalDepot } from "../depot/depots/localDepot";
+
+export const sqll = new SqliteLayer('/home/fkws/workspaces/kws/klonk-orm/src/testing/test.sqlite');
+export const pg = new PgLayer(process.env.TESTING_PG_URL!);
+export const mysql = new MysqlLayer(process.env.TESTING_MYSQL_URL!);
+
+export const localDepot = new LocalDepot(
+    "/home/fkws/workspaces/kws/klonk-orm/src/testing/bucket"
+);
+
+export const s3Depot = new S3Depot({
+    bucket: "testing-bucket",
+    endpoint: process.env.TESTING_S3_ENDPOINT!,
+    accessKeyId: process.env.TESTING_S3_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.TESTING_S3_SECRET_ACCESS_KEY!,
+})
+
+export const layerPool = korm.pool()
+    .setLayers(
+        { layer: sqll, ident: "sqlite" },
+        { layer: pg, ident: "pg" },
+        { layer: mysql, ident: "mysql" },
+    )
+    .setDepots(
+        { depot: localDepot, ident: "local" },
+        { depot: s3Depot, ident: "s3" },
+    )
+    .open();

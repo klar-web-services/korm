@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="127.18049mm"
+   height="50.4261mm"
+   viewBox="0 0 127.18049 50.4261"
+   version="1.1"
+   id="svg1"
+   sodipodi:docname="logo.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#000000"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     showgrid="false"
+     showguides="true"
+     inkscape:zoom="1.4142136"
+     inkscape:cx="96.166522"
+     inkscape:cy="156.2706"
+     inkscape:window-width="716"
+     inkscape:window-height="854"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="layer1">
+    <sodipodi:guide
+       position="48.154807,259.41156"
+       orientation="1,0"
+       id="guide2"
+       inkscape:locked="false" />
+    <sodipodi:guide
+       position="108.24483,287.39317"
+       orientation="0,-1"
+       id="guide3"
+       inkscape:locked="false" />
+  </sodipodi:namedview>
+  <defs
+     id="defs1" />
+  <g
+     inkscape:label="Layer 1"
+     inkscape:groupmode="layer"
+     id="layer1"
+     transform="translate(-31.368987,-131.30492)">
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-weight:normal;font-size:46.6295px;line-height:0;font-family:sans-serif;letter-spacing:-1.05505px;fill:black;fill-opacity:1;stroke:none;stroke-width:0.243245;stroke-dasharray:none"
+       x="98.852923"
+       y="172.1209"
+       id="text1-2"><tspan
+         sodipodi:role="line"
+         id="tspan1-7"
+         style="font-style:italic;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:46.6295px;line-height:0;font-family:'URW Gothic';-inkscape-font-specification:'URW Gothic';letter-spacing:-1.05505px;fill:#ffffff;fill-opacity:1;stroke-width:0.243245;stroke-dasharray:none"
+         x="98.852923"
+         y="172.1209">rm</tspan></text>
+    <text
+       xml:space="preserve"
+       style="font-style:normal;font-weight:normal;font-size:50.8px;line-height:0;font-family:sans-serif;letter-spacing:-1.14941px;fill:black;fill-opacity:1;stroke:none;stroke-width:0.265;stroke-dasharray:none"
+       x="29.716801"
+       y="168.98384"
+       id="text1-2-2"><tspan
+         sodipodi:role="line"
+         id="tspan1-7-5"
+         style="font-style:italic;font-variant:normal;font-weight:bold;font-stretch:normal;font-size:50.8px;line-height:0;font-family:'URW Gothic';-inkscape-font-specification:'URW Gothic';letter-spacing:-1.14941px;fill:#ffffff;fill-opacity:1;stroke-width:0.265;stroke-dasharray:none"
+         x="29.716801"
+         y="168.98384">k</tspan></text>
+    <circle
+       style="fill:none;stroke:#ffffff;stroke-width:6.2;stroke-dasharray:none;stroke-opacity:1"
+       id="path1"
+       cx="79.519491"
+       cy="156.88039"
+       r="16.101877" />
+    <rect
+       style="fill:#ffffff;fill-opacity:1;stroke-width:0.188565"
+       id="rect2"
+       width="60.735421"
+       height="6.2029855"
+       x="79.523394"
+       y="137.67851" />
+    <path
+       style="fill:#ffffff;fill-opacity:1;stroke:none;stroke-width:0.264583px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       d="m 133.85042,131.30492 1.68628,12.57658 h 23.01278 z"
+       id="path3"
+       sodipodi:nodetypes="cccc" />
+    <rect
+       style="fill:#ffffff;fill-opacity:1;stroke-width:0.133282"
+       id="rect2-3"
+       width="30.35798"
+       height="6.2000055"
+       x="-79.519491"
+       y="-176.08227"
+       transform="scale(-1)" />
+    <path
+       style="fill:#ffffff;fill-opacity:1;stroke:none;stroke-width:0.264583px;stroke-linecap:butt;stroke-linejoin:miter;stroke-opacity:1"
+       d="M 56.361313,181.73102 54.110472,169.88226 H 31.368987 Z"
+       id="path3-5"
+       sodipodi:nodetypes="cccc" />
+  </g>
+</svg>

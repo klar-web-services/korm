@@ -1,0 +1,40 @@
+{
+  "name": "@fkws/korm",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "version": "1.0.0",
+  "scripts": {
+    "build": "bun build ./index.ts --outdir ./dist --target bun --format esm && bun run build:types",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:watch": "bun build ./index.ts --outdir ./dist --target bun --format esm --watch",
+    "clean": "rm -rf dist",
+    "test:unit": "bun test --coverage ./src/*.unit.test.ts ./src/**/*.unit.test.ts",
+    "test:integration": "bun test \"src/testing/integration.test.ts\"",
+    "test:hostile": "bun test \"src/testing/hostile.test.ts\""
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "bun-types": "latest"
+  },
+  "bin": {
+    "generate-encryption-key": "./scripts/generate_encryption_key.js"
+  },
+  "files": ["dist", "src", "scripts", "examples", "README.md"],
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@fkws/klonk-result": "^0.0.3",
+    "argon2": "^0.44.0",
+    "mysql2": "^3.16.0",
+  }
+}
