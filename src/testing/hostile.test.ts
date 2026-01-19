@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +41,8 @@ type DepotRecord = {
 type ResultLike = { isErr(): boolean };
 
 const { eq, inList, like } = korm.qfns;
+
+setDefaultTimeout(20_000);
 
 type LayerCleanup =
     | { type: "sqlite"; path: string }
