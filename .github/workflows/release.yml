@@ -27,7 +27,7 @@ jobs:
         run: bun run build
       - name: Update npm
         run: npm install -g npm@latest
-      - name: Run tests
+      - name: Run unit tests (JUnit)
         env:
           TESTING_PG_URL: ${{ secrets.TESTING_PG_URL }}
           TESTING_MYSQL_URL: ${{ secrets.TESTING_MYSQL_URL }}
@@ -36,8 +36,61 @@ jobs:
           TESTING_S3_SECRET_ACCESS_KEY: ${{ secrets.TESTING_S3_SECRET_ACCESS_KEY }}
           KORM_ENCRYPTION_KEY: ${{ secrets.KORM_ENCRYPTION_KEY }}
         run: |
-          bun run test:unit
-          bun run test:integration
-          bun run test:hostile
+          mkdir -p test-results
+          bun test --coverage ./src/*.unit.test.ts ./src/**/*.unit.test.ts --reporter junit --reporter-outfile test-results/unit.xml
+      - name: Run integration tests (JUnit)
+        env:
+          TESTING_PG_URL: ${{ secrets.TESTING_PG_URL }}
+          TESTING_MYSQL_URL: ${{ secrets.TESTING_MYSQL_URL }}
+          TESTING_S3_ENDPOINT: ${{ secrets.TESTING_S3_ENDPOINT }}
+          TESTING_S3_ACCESS_KEY_ID: ${{ secrets.TESTING_S3_ACCESS_KEY_ID }}
+          TESTING_S3_SECRET_ACCESS_KEY: ${{ secrets.TESTING_S3_SECRET_ACCESS_KEY }}
+          KORM_ENCRYPTION_KEY: ${{ secrets.KORM_ENCRYPTION_KEY }}
+        run: |
+          bun test "src/testing/integration.test.ts" --reporter junit --reporter-outfile test-results/integration.xml
+      - name: Run hostile tests (JUnit)
+        env:
+          TESTING_PG_URL: ${{ secrets.TESTING_PG_URL }}
+          TESTING_MYSQL_URL: ${{ secrets.TESTING_MYSQL_URL }}
+          TESTING_S3_ENDPOINT: ${{ secrets.TESTING_S3_ENDPOINT }}
+          TESTING_S3_ACCESS_KEY_ID: ${{ secrets.TESTING_S3_ACCESS_KEY_ID }}
+          TESTING_S3_SECRET_ACCESS_KEY: ${{ secrets.TESTING_S3_SECRET_ACCESS_KEY }}
+          KORM_ENCRYPTION_KEY: ${{ secrets.KORM_ENCRYPTION_KEY }}
+        run: |
+          bun test "src/testing/hostile.test.ts" --reporter junit --reporter-outfile test-results/hostile.xml
+      - name: Publish unit test report
+        uses: dorny/test-reporter@v1
+        with:
+          name: Unit Tests
+          path: test-results/unit.xml
+          reporter: java-junit
+          fail-on-error: true
+      - name: Publish integration test report
+        uses: dorny/test-reporter@v1
+        with:
+          name: Integration Tests
+          path: test-results/integration.xml
+          reporter: java-junit
+          fail-on-error: true
+      - name: Publish hostile test report
+        uses: dorny/test-reporter@v1
+        with:
+          name: Hostile Tests
+          path: test-results/hostile.xml
+          reporter: java-junit
+          fail-on-error: true
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-results
+          path: test-results/*.xml
+      - name: Write summary
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Release test suites
+          - Unit: `src/**/*.unit.test.ts` (core APIs, types, helpers)
+          - Integration: `src/testing/integration.test.ts` (multi-layer, WAL, backups, resolvePaths)
+          - Hostile: `src/testing/hostile.test.ts` (adversarial probes for injection and misuse)
+          EOF
       - name: Publish
         run: npm publish --provenance --access public
