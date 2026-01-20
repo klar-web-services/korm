@@ -75,14 +75,16 @@ export class PgLayer implements SourceLayer {
   async backup(context: BackupContext): Promise<void> {
     const now = context.now ?? new Date();
     const tables = (await this._db.unsafe(
-      `SELECT table_name
+      `SELECT table_schema, table_name
              FROM information_schema.tables
-             WHERE table_schema = ANY(current_schemas(false))
+             WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
              AND (table_name LIKE '__items__%' OR table_name = '__korm_meta__' OR table_name = '__korm_pool__')`,
-    )) as Array<{ table_name: string }>;
+    )) as Array<{ table_schema: string; table_name: string }>;
     const dumps: Array<{ name: string; rows: Record<string, unknown>[] }> = [];
     for (const row of tables) {
-      const safeName = this._quoteIdent(row.table_name);
+      const safeSchema = this._quoteIdent(row.table_schema);
+      const safeTable = this._quoteIdent(row.table_name);
+      const safeName = `${safeSchema}.${safeTable}`;
       const rows = (await this._db.unsafe(
         `SELECT * FROM ${safeName}`,
       )) as Record<string, unknown>[];
