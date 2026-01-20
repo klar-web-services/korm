@@ -12,9 +12,7 @@
 
 korm is a Unified Data Runtime for Bun that treats SQL databases, references, and file storage as one cohesive data model. You get type-safe items, cross-layer references, encrypted fields, depot-backed files, and an optional undo/redo WAL for crash safety.
 
-[![Unit Tests](https://github.com/klar-web-services/korm/actions/workflows/tests-unit.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/tests-unit.yml)
-[![Integration Tests](https://github.com/klar-web-services/korm/actions/workflows/tests-integration.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/tests-integration.yml)
-[![Hostile Tests](https://github.com/klar-web-services/korm/actions/workflows/tests-hostile.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/tests-hostile.yml)
+[![Tests](https://github.com/klar-web-services/korm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/ci.yml)
 
 ## Highlights
 
