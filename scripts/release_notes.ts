@@ -6,8 +6,13 @@ if (!rawVersion) {
   process.exit(1);
 }
 
-const normalized = rawVersion.startsWith("v") ? rawVersion.slice(1) : rawVersion;
-const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+const normalized = rawVersion.startsWith("v")
+  ? rawVersion.slice(1)
+  : rawVersion;
+const changelog = readFileSync(
+  new URL("../CHANGELOG.md", import.meta.url),
+  "utf8",
+);
 const lines = changelog.split(/\r?\n/);
 
 const header = `## ${normalized}`;
@@ -19,8 +24,10 @@ if (startIndex === -1) {
 
 const bodyLines: string[] = [];
 for (let i = startIndex + 1; i < lines.length; i += 1) {
-  if (lines[i].startsWith("## ")) break;
-  bodyLines.push(lines[i]);
+  const line = lines[i];
+  if (line === undefined) break;
+  if (line.startsWith("## ")) break;
+  bodyLines.push(line);
 }
 
 const body = bodyLines.join("\n").trim();

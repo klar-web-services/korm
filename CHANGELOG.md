@@ -20,6 +20,7 @@ Main changes center on the new pool builder naming/targeting helpers (`korm.use`
 **CI & Reporting**
 - Split the GitHub Actions test workflows into unit/integration/hostile runs and publish JUnit reports with summaries in `.github/workflows/tests-*.yml`.
 - Added a `release:notes` helper that prints the `CHANGELOG.md` section for a version tag.
+- Fixed Postgres backup snapshots to respect the active schema search path in `src/sources/layers/pg.ts`.
 
 **Internal Docs/Style**
 - Expanded inline docs around backup intervals, pool metadata, lock storage, and encryption alias usage, plus formatting normalization in `src/sources/backMan.ts`, `src/sources/poolMeta.ts`, `src/sources/lockStore.ts`, `src/sources/layerPool.ts`, `src/security/encryption.ts`.
