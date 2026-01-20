@@ -14,7 +14,7 @@
       "import": "./dist/index.js"
     }
   },
-  "version": "1.0.0",
+  "version": "1.1.0",
   "scripts": {
     "build": "bun build ./index.ts --outdir ./dist --target bun --format esm && bun run build:types",
     "build:types": "tsc -p tsconfig.build.json",
@@ -22,7 +22,8 @@
     "clean": "rm -rf dist",
     "test:unit": "bun test --coverage ./src/*.unit.test.ts ./src/**/*.unit.test.ts",
     "test:integration": "bun test \"src/testing/integration.test.ts\"",
-    "test:hostile": "bun test \"src/testing/hostile.test.ts\""
+    "test:hostile": "bun test \"src/testing/hostile.test.ts\"",
+    "release:notes": "bun scripts/release_notes.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -34,7 +35,13 @@
   "publishConfig": {
     "access": "public"
   },
-  "files": ["dist", "src", "scripts", "examples", "README.md"],
+  "files": [
+    "dist",
+    "src",
+    "scripts",
+    "examples",
+    "README.md"
+  ],
   "peerDependencies": {
     "typescript": "^5"
   },

@@ -12,6 +12,10 @@
 
 korm is a Unified Data Runtime for Bun that treats SQL databases, references, and file storage as one cohesive data model. You get type-safe items, cross-layer references, encrypted fields, depot-backed files, and an optional undo/redo WAL for crash safety.
 
+[![Unit Tests](https://github.com/klar-web-services/korm/actions/workflows/tests-unit.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/tests-unit.yml)
+[![Integration Tests](https://github.com/klar-web-services/korm/actions/workflows/tests-integration.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/tests-integration.yml)
+[![Hostile Tests](https://github.com/klar-web-services/korm/actions/workflows/tests-hostile.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/tests-hostile.yml)
+
 ## Highlights
 
 - Multi-layer data model: SQLite, Postgres, and MySQL in a single pool.
@@ -24,6 +28,14 @@ korm is a Unified Data Runtime for Bun that treats SQL databases, references, an
 - Optional shared locks via a db-backed lock table for cross-process coordination.
 - Optional pool metadata to detect mismatched configs and enable discovery.
 - Automatic schema creation with safe (or destructive) evolution.
+
+## Test Suites
+
+These run in GitHub Actions on `main` and publish both a run summary and a structured test report.
+
+- **Unit**: fast checks over individual modules in `src/**/*.unit.test.ts` (core APIs, types, helpers).
+- **Integration**: full multi-layer behavior across SQLite/Postgres/MySQL/depots, WAL, backups, resolvePaths, encryption (`src/testing/integration.test.ts`).
+- **Hostile**: adversarial probes against injection, unsafe identifiers, RN/path traversal, WAL tampering (`src/testing/hostile.test.ts`).
 
 ## Install
 
