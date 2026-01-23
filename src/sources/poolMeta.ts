@@ -1236,7 +1236,7 @@ export function formatPoolMetaMismatch(params: {
   const message = [
     `ATTENTION: parts of this pool have been used by another instance of korm. Your configuration does not match. Discrepancies: ${discrepancyText}`,
     "",
-    `Pool meta is present in ${layerText}. To continue, either match this pool's configuration, allow korm to discover this pool (const myPool = korm.discover(sourceLayer)) or force a pool reset explicitly by calling korm.danger.reset(pool) once. This will destroy most of the data in the layers configured in your pool. Do not use this on any production assets.`,
+    `Pool meta is present in ${layerText}. To continue, either match this pool's configuration, allow korm to discover this pool (const myPool = korm.discover(sourceLayer)) or force a pool reset explicitly by calling korm.danger(korm.reset(pool)) once. This will destroy most of the data in the layers configured in your pool. Do not use this on any production assets.`,
     "",
     "Note that pool discovery depends on sharing the same KORM_ENCRYPTION_KEY environment variable, as pool credentials are encrypted.",
   ].join("\n");

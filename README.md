@@ -21,7 +21,7 @@ korm is a Unified Data Runtime for Bun that treats SQL databases, references, an
 - Type-safe resolution (`resolvePaths`) that turns RN fields into actual objects.
 - Built-in encryption and redaction for sensitive fields.
 - Depot files (local or S3-compatible) that persist alongside items.
-- Optional undo/redo WAL for crash safety across `create`, `commit`, and `tx` (and optionally depot file writes).
+- Optional undo/redo WAL for crash safety across `create`, `commit`, `delete`, and `tx` (and optionally depot file writes).
 - Optional scheduled backups with retention and restore.
 - Optional shared locks via a db-backed lock table for cross-process coordination.
 - Optional pool metadata to detect mismatched configs and enable discovery.
@@ -217,6 +217,17 @@ const created = (await floating.create()).unwrap();
 // update
 const updated = created.update({ ... }).unwrap();
 const committed = (await updated.commit()).unwrap();
+
+// delete + restore
+const deleted = (await committed.delete()).unwrap();
+const restored = (await deleted.restore()).unwrap();
+await korm.danger(deleted.destroy()); // optional: prevent future restore
+
+// empty placeholder (no RN/data)
+const empty = korm.item<T>(pool).empty();
+if (empty.isEmpty()) {
+  // ...
+}
 ```
 
 ### Querying
@@ -328,6 +339,7 @@ State machine:
 - `FloatingDepotFile.create(pool)` -> `DepotFile` (committed)
 - `DepotFile.update(editFn)` -> `UncommittedDepotFile`
 - `UncommittedDepotFile.commit(pool)` -> `DepotFile`
+- `DepotFile.delete(pool)` -> `boolean` (removes the file)
 
 When a `DepotFileLike` is present in item data, korm uploads it automatically and stores the RN string in the database.
 
@@ -387,7 +399,7 @@ await korm.tx(item).persist({ destructive: true });
 
 ## Item-level locking
 
-korm serializes operations on the same RN within a single process. `create`, `commit`, and `tx.persist` acquire locks automatically, and updates that cascade through `resolvePaths` lock all touched RNs in a stable order to avoid deadlocks.
+korm serializes operations on the same RN within a single process. `create`, `commit`, `delete`, and `tx.persist` acquire locks automatically, and updates that cascade through `resolvePaths` lock all touched RNs in a stable order to avoid deadlocks.
 
 If you need your own critical section, use the pool locker:
 
@@ -433,7 +445,16 @@ To recreate a pool from metadata:
 const pool = await korm.discover(korm.layers.pg(process.env.PG_URL!));
 ```
 
-Discovery requires the same `KORM_ENCRYPTION_KEY` because pool credentials are encrypted. Use `korm.danger.reset(pool, { mode })` only if you intend to wipe korm-managed data (`mode` can scope to `"layers"`, `"depots"`, or `"meta"` / `"meta only"`).
+Discovery requires the same `KORM_ENCRYPTION_KEY` because pool credentials are encrypted. Use `korm.danger(korm.reset(pool, { mode }))` only if you intend to wipe korm-managed data (`mode` can scope to `"layers"`, `"depots"`, or `"meta"` / `"meta only"`).
+
+## Danger wrappers
+
+Wrap destructive operations so they can only run when explicitly passed to `danger(...)`:
+
+```ts
+const wipe = korm.reset(pool, { mode: "all" });
+await korm.danger(wipe);
+```
 
 ## Write-Ahead Log (WAL)
 
@@ -454,12 +475,12 @@ const pool = korm.pool()
 
 What it does:
 
-- Writes a WAL record before each `create`, `commit`, or `tx.persist`, including before-images.
+- Writes a WAL record before each `create`, `commit`, `delete`, or `tx.persist`, including before-images.
 - On startup, undoes pending WALs using before-images, then retries them and marks them done.
 - Pool operations wait for WAL recovery on startup. If you read depot files directly, call `await pool.ensureWalReady()` first.
 - When shared locks are enabled via `withLocks`, WAL recovery is guarded so only one instance replays at a time.
 - WAL records contain encrypted payloads only (never cleartext) for encrypted fields, including before-images.
-- When `depotOps: "record"` is enabled, WAL snapshots depot file payloads into the WAL depot and replays them.
+- When `depotOps: "record"` is enabled, WAL snapshots depot file payloads (puts and deletes) into the WAL depot and replays them.
 - `retention: "keep"` stores done records for audit; `"delete"` removes them.
 
 ## Backups
@@ -540,7 +561,18 @@ npx tsc --noEmit
 ```bash
 fish -lc "bun run test:unit"
 fish -lc "bun run test:integration"
+fish -lc "bun run test:hostile"
 ```
+
+To run integration/hostile tests locally without external services, start the
+Docker resources and load the generated env file:
+
+```bash
+fish -lc "bun run test:stage"
+set -a; source .env.testing.local; set +a
+```
+
+The Docker definitions live in `src/testing/docker-compose.yml` if you want to adjust ports.
 
 ## API reference (high level)
 
@@ -558,8 +590,15 @@ fish -lc "bun run test:integration"
 - `korm.target.layer(ident)` -> Pool layer target for `withMeta` / `withLocks`
 - `BackMan` -> backups manager (scheduling + restore with `play`)
 - `korm.discover(layer)` -> Discover a pool from metadata stored in a layer
-- `korm.danger.reset(pool, { mode })` -> Drop korm-managed data (`mode`: `"all" | "layers" | "depots" | "meta" | "meta only"`)
+- `korm.reset(pool, { mode })` -> `BaseNeedsDanger<Promise<void>>` for dropping korm-managed data (`mode`: `"all" | "layers" | "depots" | "meta" | "meta only"`)
+- `korm.danger(op)` -> execute a `BaseNeedsDanger` wrapper
 - `korm.pool(...entries, options?)` -> `LayerPool` (legacy)
+
+### Danger helpers
+
+- `danger(op)` -> execute a `BaseNeedsDanger` wrapper
+- `needsDanger(fn, ...args)` -> wrap a dangerous operation for explicit execution
+- `BaseNeedsDanger` -> wrapper type for dangerous operations
 
 ### LayerPool
 
@@ -571,10 +610,18 @@ fish -lc "bun run test:integration"
 
 ### Item methods
 
+- `UninitializedItem.empty()`
 - `FloatingItem.create()`
+- `Item.isEmpty()`
 - `Item.update(delta)`
+- `Item.delete()` -> `Promise<Result<DeletedItem<T>>>` (persists deletion + snapshot for restore)
 - `UncommittedItem.commit()`
 - `Item.show({ color, what })`
+
+### DeletedItem methods
+
+- `DeletedItem.restore()` -> `Promise<Result<Item<T>>>`
+- `DeletedItem.destroy()` -> `BaseNeedsDanger<boolean>`
 
 ### Query
 

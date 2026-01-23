@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.1
+
+Adds an explicit empty item builder plus danger wrappers, and extends delete support to persist item removals with WAL coverage.
+
+**Core API**
+- Added `korm.item(pool).empty()` to create a placeholder `Item` and taught `Item.isEmpty()` to honor explicit empties.
+- Added `BaseNeedsDanger`, `needsDanger`, and `danger` wrappers for guarding destructive operations behind an explicit call.
+- Aligned layer deletes with insert/update conventions by erroring on missing rows and standardizing delete error messages.
+- Implemented `Item.delete()` to persist deletions and return a `DeletedItem` snapshot for optional restore.
+- WAL now records delete operations and replays them during recovery.
+- WAL undo tolerates missing rows when deleting insert before-images, matching delete semantics.
+- Added `DepotFile.delete(pool)` and WAL depot delete ops (with before-image payloads) when `depotOps: "record"` is enabled.
+- Replaced `korm.danger.reset(...)` with `korm.reset(...)` (returns `BaseNeedsDanger`) and `korm.danger(...)` for execution.
+
+**Docs**
+- Documented empty items and `Item.isEmpty()` in `README.md`.
+- Updated delete/WAL guidance to reflect persisted deletes and delete WAL entries.
+- Documented delete/restore snapshots and `DeletedItem` helpers in `README.md`.
+
+**Testing**
+- Added local Docker compose resources and `bun run test:stage` for integration/hostile test dependencies.
+- Updated CI integration/hostile jobs to stage local test resources via `test:stage`.
+
 ## 1.1.0
 
 Main changes center on the new pool builder naming/targeting helpers (`korm.use`/`korm.target` plus the `korm.depots` rename) and expanded WAL/tx test coverage; the rest is documentation/typing polish and formatting alignment across core and tests.

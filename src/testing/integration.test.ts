@@ -18,7 +18,7 @@ import type { RN } from "../core/rn";
 import type { _QueryComponent } from "../core/query";
 import { DepotFile, isDepotFile, type DepotFileLike } from "../depot/depotFile";
 import type { LayerPool } from "../sources/layerPool";
-import type { WalRecord } from "../wal/wal";
+import type { WalDepotOp, WalRecord } from "../wal/wal";
 import { BackMan } from "../sources/backMan";
 
 function loadEnvIfMissing(): void {
@@ -2095,12 +2095,43 @@ describe("layers integration", () => {
       }),
     );
     const record = records.find((entry) =>
-      entry.depotOps?.some((op) => op.rn === fileRn),
+      entry.depotOps?.some((op) => op.type === "put" && op.rn === fileRn),
     );
     expect(record).toBeTruthy();
-    const depotOp = record!.depotOps!.find((op) => op.rn === fileRn)!;
+    const depotOp = record!.depotOps!.find(
+      (op): op is Extract<WalDepotOp, { type: "put" }> =>
+        op.type === "put" && op.rn === fileRn,
+    )!;
     const payloadFile = await localDepot.getFile(korm.rn(depotOp.payloadRn));
     expect(await payloadFile.text()).toBe(content);
+
+    const depotFile = await localDepot.getFile(korm.rn(fileRn));
+    const deleteOk = await depotFile.delete(walPool);
+    expect(deleteOk).toBe(true);
+
+    const doneFilesAfter = await localDepot.listFiles(
+      walPrefixRn("local", walNamespace, wal.poolId, "done"),
+    );
+    const recordsAfter = await Promise.all(
+      doneFilesAfter.map(async (file) => {
+        const text = await file.text();
+        return JSON.parse(text) as WalRecord;
+      }),
+    );
+    const deleteRecord = recordsAfter.find((entry) =>
+      entry.depotOps?.some((op) => op.type === "delete" && op.rn === fileRn),
+    );
+    expect(deleteRecord).toBeTruthy();
+    const deleteOp = deleteRecord!.depotOps!.find(
+      (op): op is Extract<WalDepotOp, { type: "delete" }> =>
+        op.type === "delete" && op.rn === fileRn,
+    )!;
+    if (deleteOp.beforePayloadRn) {
+      const deletePayload = await localDepot.getFile(
+        korm.rn(deleteOp.beforePayloadRn),
+      );
+      expect(await deletePayload.text()).toBe(content);
+    }
   });
 
   test("wal recovery replays pending records", async () => {

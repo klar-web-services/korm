@@ -20,9 +20,10 @@
     "build:types": "tsc -p tsconfig.build.json",
     "build:watch": "bun build ./index.ts --outdir ./dist --target bun --format esm --watch",
     "clean": "rm -rf dist",
-    "test:unit": "bun test --coverage ./src/*.unit.test.ts ./src/**/*.unit.test.ts",
-    "test:integration": "bun test \"src/testing/integration.test.ts\"",
-    "test:hostile": "bun test \"src/testing/hostile.test.ts\"",
+    "test:stage": "bash ./src/testing/stage-resources.sh",
+    "test:unit": "bun run build && bun test --coverage ./src/*.unit.test.ts ./src/**/*.unit.test.ts",
+    "test:integration": "bun run build && bun test \"src/testing/integration.test.ts\"",
+    "test:hostile": "bun run build && bun test \"src/testing/hostile.test.ts\"",
     "release:notes": "bun scripts/release_notes.ts"
   },
   "devDependencies": {

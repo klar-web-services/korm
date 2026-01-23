@@ -135,6 +135,94 @@ describe("korm core flow", () => {
     }
   });
 
+  test("deleteItem reports missing rows", async () => {
+    const { pool, root } = await createTempPool();
+    try {
+      const created = (
+        await korm
+          .item<User>(pool)
+          .from.data({
+            namespace: "users",
+            kind: "basic",
+            data: { name: "DeleteMe", password: await korm.password("pw") },
+          })
+          .create()
+      ).unwrap();
+
+      const layer = pool.getLayer("main")!;
+      const firstDelete = await layer.deleteItem(created.rn!);
+      expect(firstDelete.success).toBe(true);
+
+      const secondDelete = await layer.deleteItem(created.rn!);
+      expect(secondDelete.success).toBe(false);
+      if (!secondDelete.success) {
+        expect(secondDelete.error.message).toContain("which does not exist");
+      }
+
+      const missingRn = korm.rn(
+        "[rn][from::main]:ghosts:phantom:00000000-0000-4000-8000-000000000000",
+      );
+      const missingDelete = await layer.deleteItem(missingRn);
+      expect(missingDelete.success).toBe(false);
+      if (!missingDelete.success) {
+        expect(missingDelete.error.message).toContain("which does not exist");
+      }
+    } finally {
+      await pool.close();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("Item.delete persists and can restore", async () => {
+    const { pool, root } = await createTempPool();
+    try {
+      const created = (
+        await korm
+          .item<User>(pool)
+          .from.data({
+            namespace: "users",
+            kind: "basic",
+            data: { name: "DeleteFlow", password: await korm.password("pw") },
+          })
+          .create()
+      ).unwrap();
+
+      const deleteResult = await created.delete();
+      expect(deleteResult.isOk()).toBe(true);
+      const deleted = deleteResult.unwrap();
+
+      const layer = pool.getLayer("main")!;
+      const missing = await layer.readItemRaw<User>(created.rn!);
+      expect(missing).toBeUndefined();
+
+      const restoreResult = await deleted.restore();
+      expect(restoreResult.isOk()).toBe(true);
+      const restored = restoreResult.unwrap();
+      const restoredRaw = await layer.readItemRaw<User>(restored.rn!);
+      expect(restoredRaw?.name).toBe("DeleteFlow");
+
+      const wal = pool.wal!;
+      const walDepot = pool.getDepot(wal.depotIdent)!;
+      const donePrefix = korm.rn(
+        `[rn][depot::${wal.depotIdent}]:__korm_wal__:${wal.namespace}:${wal.poolId}:done:*`,
+      );
+      const doneFiles = await walDepot.listFiles(donePrefix);
+      const records = await Promise.all(
+        doneFiles.map(async (file) => JSON.parse(await file.text())),
+      );
+      const hasDelete = records.some(
+        (record: { ops?: { type: string; rn?: string }[] }) =>
+          record.ops?.some(
+            (op) => op.type === "delete" && op.rn === created.rn!.value(),
+          ),
+      );
+      expect(hasDelete).toBe(true);
+    } finally {
+      await pool.close();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("discovers a pool from metadata and can reset meta", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "korm-discover-"));
     const dbPath = path.join(root, "db.sqlite");
@@ -154,7 +242,7 @@ describe("korm core flow", () => {
     const discovered = await korm.discover(sourceLayer);
     expect(discovered.getLayers().size).toBe(1);
     expect(discovered.getDepots().size).toBe(1);
-    await korm.danger.reset(discovered, { mode: "meta" });
+    await korm.danger(korm.reset(discovered, { mode: "meta" }));
     await discovered.close();
     sourceLayer.close();
     await fs.rm(root, { recursive: true, force: true });

@@ -876,21 +876,32 @@ export class PgLayer implements SourceLayer {
   async deleteItem(rn: RN): Promise<DbDeleteResult> {
     const rawTableName = `__items__${rn.namespace!}__${rn.kind!}`;
     const tableInfo = await this._getTableInfo(rawTableName);
-    if (tableInfo.length === 0) return { success: true };
+    if (tableInfo.length === 0) {
+      return {
+        success: false,
+        error: new Error(this._friendlyDeleteMessage(rn)),
+      };
+    }
     const safeTableName = this._quoteIdent(rawTableName);
+    const existing = await this._unsafe(
+      `SELECT 1 FROM ${safeTableName} WHERE "rnId" = $1`,
+      [rn.id!],
+    );
+    if (existing.length === 0) {
+      return {
+        success: false,
+        error: new Error(this._friendlyDeleteMessage(rn)),
+      };
+    }
     try {
       await this._unsafe(`DELETE FROM ${safeTableName} WHERE "rnId" = $1`, [
         rn.id!,
       ]);
       return { success: true };
     } catch (error) {
-      const rnValue = rn.value() ?? "(unknown rn)";
-      const baseLayer = `${this.type} source layer '${this.identifier}'`;
       return {
         success: false,
-        error: new Error(
-          `Failed to delete item '${rnValue}' in ${baseLayer}: ${error}`,
-        ),
+        error: new Error(this._friendlyDeleteMessage(rn, error)),
       };
     }
   }
@@ -1194,6 +1205,15 @@ export class PgLayer implements SourceLayer {
       return `Tried to create item '${rnValue}' which already exists in ${baseLayer}.`;
     }
     return `Failed to ${op} item '${rnValue}' in ${baseLayer}: ${errorText}`;
+  }
+
+  private _friendlyDeleteMessage(rn: RN, error?: unknown): string {
+    const rnValue = rn.value() ?? "(unknown rn)";
+    const baseLayer = `${this.type} source layer '${this.identifier}'`;
+    if (!error) {
+      return `Tried to delete item '${rnValue}' which does not exist in ${baseLayer}.`;
+    }
+    return `Failed to delete item '${rnValue}' in ${baseLayer}: ${String(error)}`;
   }
 
   private async _safeEnsureTables<T extends JSONable>(

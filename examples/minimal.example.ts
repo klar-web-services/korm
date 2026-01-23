@@ -60,4 +60,8 @@ const updatedCar = (await car.update({ model: "C5" }).commit()).unwrap();
 console.log(cars.map((item) => item.show({ color: true })).join("\n"));
 console.log(updatedCar.show({ color: true }));
 
+const deletedCar = (await updatedCar.delete()).unwrap();
+const restoredCar = (await deletedCar.restore()).unwrap();
+console.log(restoredCar.show({ color: true }));
+
 await pool.close();

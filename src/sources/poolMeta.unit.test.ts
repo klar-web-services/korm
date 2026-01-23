@@ -102,7 +102,7 @@ describe("pool metadata", () => {
     await discovered.close();
   });
 
-  test("danger.reset clears pool metadata", async () => {
+  test("reset clears pool metadata", async () => {
     const dbPath = makeSqlitePath();
     const layer1 = korm.layers.sqlite(dbPath);
     const pool1 = korm
@@ -111,7 +111,7 @@ describe("pool metadata", () => {
       .withMeta(korm.target.layer("db"))
       .open();
     await pool1.ensureWalReady();
-    await korm.danger.reset(pool1, { mode: "meta only" });
+    await korm.danger(korm.reset(pool1, { mode: "meta only" }));
     try {
       await pool1.close();
     } catch {

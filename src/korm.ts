@@ -36,6 +36,7 @@ import {
 import { LocalDepot, S3Depot } from ".";
 import type { S3DepotOptions } from "./depot/depots/s3Depot";
 import type { GetOpts } from "./core/query";
+import { danger, needsDanger } from "./core/danger";
 
 type JsonPrimitive = string | number | boolean | null;
 
@@ -596,7 +597,7 @@ async function reset(
 const korm = {
   /**
    * Begin an item builder for a pool.
-   * Next: call `from.data(...)` to create, `from.query(...)` to query, or `from.rn(...)` to fetch a single RN.
+   * Next: call `.empty()` for a placeholder, `from.data(...)` to create, `from.query(...)` to query, or `from.rn(...)` to fetch a single RN.
    */
   item: item,
 
@@ -651,16 +652,18 @@ const korm = {
   discover: discover,
 
   /**
-   * Danger zone helpers for destructive maintenance.
+   * Execute a wrapped dangerous operation.
+   * Next: await the returned result or handle it if it is synchronous.
    */
-  danger: {
-    /**
-     * Drop korm-managed data from the pool.
-     * Pass `{ mode: "all" | "layers" | "depots" | "meta" | "meta only" }` to scope deletion.
-     * Next: recreate the pool configuration from scratch.
-     */
-    reset: reset,
-  },
+  danger: danger,
+
+  /**
+   * Wrap a pool reset behind `korm.danger(...)`.
+   * Pass `{ mode: "all" | "layers" | "depots" | "meta" | "meta only" }` to scope deletion.
+   * Next: call `korm.danger(korm.reset(pool, options))` to execute.
+   */
+  reset: (pool: LayerPool, options?: DangerResetOptions) =>
+    needsDanger(reset, pool, options ?? {}),
 
   /**
    * Encrypt a value symmetrically (AES-256-GCM) for storage.

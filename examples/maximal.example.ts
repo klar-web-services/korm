@@ -436,6 +436,11 @@ const invoiceWithFile = (
 console.log("Invoice file contents:");
 console.log(await invoiceWithFile.data?.pdf.text());
 
+// If we need to remove the invoice, delete it and keep a restore snapshot.
+const deletedInvoice = (await newInvoice.delete()).unwrap();
+const restoredInvoice = (await deletedInvoice.restore()).unwrap();
+console.log("Restored invoice RN:", restoredInvoice.rn?.value());
+
 await pool.close(); // Close the pool, so the program exits. If your program doesn't exit, you forgot to call this.
 
 // Restore from a backup file (example): use a BackMan instance so you can call play(...) with a backup RN.
