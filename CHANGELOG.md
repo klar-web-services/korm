@@ -22,6 +22,7 @@ Adds an explicit empty item builder plus danger wrappers, and extends delete sup
 **Testing**
 - Added local Docker compose resources and `bun run test:stage` for integration/hostile test dependencies.
 - Updated CI integration/hostile jobs to stage local test resources via `test:stage`.
+- Updated the release workflow to stage local test resources via `test:stage`.
 
 ## 1.1.0
 
