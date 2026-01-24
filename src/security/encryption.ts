@@ -2,7 +2,60 @@ import type { JSONable } from "../korm";
 
 import { randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import util from "node:util";
-import argon2 from "argon2";
+
+type Argon2Module = typeof import("argon2");
+
+type PasswordHasher = {
+  hash: (plainText: string) => Promise<string>;
+  verify: (hash: string, plainText: string) => Promise<boolean>;
+};
+
+let passwordHasher: PasswordHasher | undefined;
+
+async function loadArgon2(): Promise<Argon2Module> {
+  const mod = await import("argon2");
+  return (mod as Argon2Module & { default?: Argon2Module }).default ?? mod;
+}
+
+async function getPasswordHasher(): Promise<PasswordHasher> {
+  if (passwordHasher) {
+    return passwordHasher;
+  }
+  if (
+    typeof Bun !== "undefined" &&
+    Bun.password?.hash &&
+    Bun.password?.verify
+  ) {
+    passwordHasher = {
+      hash: async (plainText) =>
+        Bun.password.hash(plainText, {
+          algorithm: "argon2id",
+          memoryCost: 2 ** 16,
+          timeCost: 3,
+        }),
+      verify: async (hash, plainText) => Bun.password.verify(plainText, hash),
+    };
+    return passwordHasher;
+  }
+  try {
+    const argon2 = await loadArgon2();
+    passwordHasher = {
+      hash: async (plainText) =>
+        argon2.hash(plainText, {
+          type: argon2.argon2id,
+          memoryCost: 2 ** 16,
+          timeCost: 3,
+          parallelism: 1,
+        }),
+      verify: async (hash, plainText) => argon2.verify(hash, plainText),
+    };
+    return passwordHasher;
+  } catch (error) {
+    throw new Error(
+      `FATAL: Password hashing requires Bun.password or a working "argon2" native build. If you're running under Node, use a supported LTS or rebuild argon2 from source. (${String(error)})`,
+    );
+  }
+}
 
 /**
  * Serialized encrypted payload stored in the database or WAL.
@@ -62,7 +115,8 @@ export class Encrypted<T extends JSONable> {
       );
     }
     try {
-      return await argon2.verify(hash, plainText);
+      const hasher = await getPasswordHasher();
+      return await hasher.verify(hash, plainText);
     } catch (err) {
       return false;
     }
@@ -213,12 +267,8 @@ export class Encrypt<T extends JSONable> {
   }
 
   private async _hashPassword(plainText: string): Promise<string> {
-    return await argon2.hash(plainText, {
-      type: argon2.argon2id,
-      memoryCost: 2 ** 16,
-      timeCost: 3,
-      parallelism: 1,
-    });
+    const hasher = await getPasswordHasher();
+    return await hasher.hash(plainText);
   }
 
   private async _encrypt(): Promise<Encrypted<T>> {

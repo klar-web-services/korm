@@ -43,6 +43,11 @@ bun add @fkws/korm
 
 korm is built for Bun. The examples in `examples/` assume Bun runtime.
 
+## Requirements
+
+- Bun >= 1.0.0.
+- Node >= 18 and < 24 if you run korm under Node (argon2 needs a compatible native build).
+
 ## Quick Start
 
 ```ts
@@ -353,6 +358,8 @@ korm provides built-in encryption with safe redaction:
 
 - `korm.encrypt(value)` -> symmetric encryption (AES-256-GCM)
 - `korm.password(value)` -> password hashing (argon2id)
+
+Password hashing uses Bun's built-in argon2 implementation when available. When running under Node, korm falls back to the `argon2` native module, so use Node >= 18 and < 24 or build argon2 from source.
 
 Encrypted fields are stored as encrypted payloads (not cleartext). In memory, you work with `Encrypt<T>`:
 

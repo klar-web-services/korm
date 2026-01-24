@@ -14,9 +14,9 @@
       "import": "./dist/index.js"
     }
   },
-  "version": "1.1.1",
+  "version": "1.1.2",
   "scripts": {
-    "build": "bun build ./index.ts --outdir ./dist --target bun --format esm && bun run build:types",
+    "build": "bun build ./index.ts --outdir ./dist --target bun --format esm --external argon2 && bun run build:types",
     "build:types": "tsc -p tsconfig.build.json",
     "build:watch": "bun build ./index.ts --outdir ./dist --target bun --format esm --watch",
     "clean": "rm -rf dist",
@@ -35,6 +35,10 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "engines": {
+    "node": ">=18 <24",
+    "bun": ">=1.0.0"
   },
   "files": [
     "dist",

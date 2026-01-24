@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.2
+
+Avoids eager argon2 native loads by preferring Bun's password hashing, lazy-loads the argon2 fallback for non-Bun runtimes, and declares supported engines for native compatibility.
+
+**Security**
+- Prefer `Bun.password` for argon2id hashing and defer argon2 native loading until needed.
+
+**Packaging**
+- Added Bun/Node engine requirements to match argon2 native compatibility.
+- Kept argon2 external in the Bun bundle to avoid hard-coded build paths for native binaries.
+
+**Docs**
+- Documented runtime requirements and password hashing behavior in `README.md`.
+
 ## 1.1.1
 
 Adds an explicit empty item builder plus danger wrappers, and extends delete support to persist item removals with WAL coverage.
