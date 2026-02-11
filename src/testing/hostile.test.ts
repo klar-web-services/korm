@@ -13,8 +13,7 @@ import { randomUUID } from "node:crypto";
 import { korm } from "../korm";
 import { FloatingItem, UncommittedItem } from "../core/item";
 import { BackMan, LockTimeoutError } from "..";
-import type { Encrypt, Item, LayerPool, SqliteLayer } from "..";
-import type { JSONable } from "../korm";
+import { BackupEventReader } from "../sources/backups";
 import type { QueryBuilder, _QueryComponent } from "../core/query";
 import type { ColumnKind } from "../core/columnKind";
 import type {
@@ -53,6 +52,12 @@ type DepotRecord = {
 type ResultLike = { isErr(): boolean };
 
 const { eq, inList, like } = korm.qfns;
+
+type JSONable = korm.types.JSONable;
+type Encrypt<T extends JSONable> = korm.types.Encrypt<T>;
+type Item<T extends JSONable> = korm.types.Item<T>;
+type LayerPool = korm.types.LayerPool;
+type SqliteLayer = korm.types.SqliteLayer;
 
 setDefaultTimeout(20_000);
 
@@ -804,7 +809,10 @@ describe("hostile API probes", () => {
 
     const pool = korm
       .pool()
-      .setLayers(korm.use.layer(layerA).as("a"), korm.use.layer(flakyLayer).as("b"))
+      .setLayers(
+        korm.use.layer(layerA).as("a"),
+        korm.use.layer(flakyLayer).as("b"),
+      )
       .setDepots(korm.use.depot(walDepot).as("wal"))
       .withWal({
         depotIdent: "wal",
@@ -856,7 +864,10 @@ describe("hostile API probes", () => {
     const layerB2 = await ensureSqliteLayer(dbBPath);
     const pool2 = korm
       .pool()
-      .setLayers(korm.use.layer(layerA2).as("a"), korm.use.layer(layerB2).as("b"))
+      .setLayers(
+        korm.use.layer(layerA2).as("a"),
+        korm.use.layer(layerB2).as("b"),
+      )
       .setDepots(korm.use.depot(walDepot).as("wal"))
       .withWal({
         depotIdent: "wal",
@@ -1116,13 +1127,23 @@ describe("hostile API probes", () => {
       const text = await files[0]!.text();
       expect(text).not.toContain(secretValue);
       expect(text).not.toContain('"__ENCRYPT__"');
-      const payload = JSON.parse(text) as {
-        tables: Array<{ name: string; rows: Array<{ secret?: string }> }>;
-      };
-      const table = payload.tables.find(
-        (entry) => entry.name === "__items__vault__backup",
+      const events = text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              t?: string;
+              table?: string;
+              row?: { secret?: string };
+            },
+        );
+      const rowEvent = events.find(
+        (event) =>
+          event.t === "row" && event.table === "__items__vault__backup",
       );
-      const secretRaw = table?.rows[0]?.secret;
+      const secretRaw = rowEvent?.row?.secret;
       expect(typeof secretRaw).toBe("string");
       const secretPayload = JSON.parse(secretRaw ?? "{}") as {
         __ENCRYPTED__?: boolean;
@@ -1132,6 +1153,71 @@ describe("hostile API probes", () => {
       await pool.close();
     }
   });
+
+  test("backups stream large tables without buffering", async () => {
+    const root = makeTempDir();
+    const depotRoot = path.join(root, "backups");
+    const dbPath = path.join(root, "backup.sqlite");
+
+    const depot = await ensureLocalDepot(depotRoot);
+    const layer = await ensureSqliteLayer(dbPath);
+
+    const pool = korm
+      .pool()
+      .setLayers(korm.use.layer(layer).as("sqlite"))
+      .setDepots(korm.use.depot(depot).as("backup"))
+      .withMeta(korm.target.layer("sqlite"))
+      .open();
+
+    const suffix = randomUUID().replace(/-/g, "");
+    const namespace = `bulk${suffix}`;
+    const kind = `rows${suffix}`;
+    const tableName = `__items__${namespace}__${kind}`;
+    const hugeCount = 3000;
+
+    try {
+      const created = await korm
+        .item<{ label: string; score: number }>(pool)
+        .from.data({
+          namespace,
+          kind,
+          data: { label: "seed", score: 0 },
+        })
+        .create();
+      expect(created.isOk()).toBe(true);
+
+      const stmt = layer._db.prepare(
+        `INSERT INTO "${tableName}" ("rnId", "label", "score") VALUES (?, ?, ?)`,
+      );
+      for (let i = 0; i < hugeCount; i += 1) {
+        stmt.run(randomUUID(), `bulk-${i}`, i + 1);
+      }
+
+      const manager = new BackMan();
+      manager.addInterval("sqlite", korm.interval.every("minute").runNow());
+      pool.configureBackups("backup", manager);
+
+      const prefix = korm.rn("[rn][depot::backup]:__korm_backups__:*");
+      const files = await waitForBackupFiles(depot, prefix, 1, 10_000);
+      expect(files.length).toBeGreaterThan(0);
+
+      const reader = new BackupEventReader(files[0]!.stream());
+      const header = await reader.next();
+      expect(header && header.t === "header").toBe(true);
+
+      let rowCount = 0;
+      while (true) {
+        const event = await reader.next();
+        if (!event) break;
+        if (event.t === "row" && event.table === tableName) {
+          rowCount += 1;
+        }
+      }
+      expect(rowCount).toBe(hugeCount + 1);
+    } finally {
+      await pool.close();
+    }
+  }, 30_000);
 
   test("backups use shared locks to prevent duplicate runs", async () => {
     const root = makeTempDir();

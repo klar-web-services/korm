@@ -310,7 +310,7 @@ type PoolOptions = {
 type FileParams<T extends JSONable = JSONable> = {
   /** Depot file RN or RN string; must point to a depot file. */
   rn: RN<T> | string;
-  /** File payload to upload. */
+  /** File payload to upload (Blob, Bun file, or readable stream). */
   file: DepotBlob;
 };
 
@@ -611,7 +611,7 @@ const korm = {
   },
 
   /**
-   * Wrap a depot file RN plus a Blob/Bun file as a floating depot file.
+   * Wrap a depot file RN plus a file or stream as a floating depot file.
    * Next: call `.create(pool)` or include it in item data to upload on create/commit.
    */
   file<T extends JSONable = JSONable>(
@@ -745,6 +745,193 @@ const korm = {
 };
 
 export { korm };
+
+/**
+ * Type-only namespace for public korm types.
+ * Next: reference these as `korm.types.*` in type positions.
+ */
+export namespace korm {
+  /**
+   * Public type aliases exposed under `korm.types`.
+   * Next: pick a type and use it in your model or helper signatures.
+   */
+  export namespace types {
+    /**
+     * JSON-compatible values accepted by korm item data.
+     * Next: use as the bound for `korm.item<T>(pool)` model types.
+     */
+    export type JSONable = JsonSerializable;
+    /**
+     * Time units supported by backup interval schedules.
+     * Next: call `korm.interval.every(...)`.
+     */
+    export type IntervalUnit = import("./sources/backMan").IntervalUnit;
+    /**
+     * Interval builder factory used by `korm.interval`.
+     * Next: call `korm.interval.every(...)`.
+     */
+    export type IntervalFactory = import("./sources/backMan").IntervalFactory;
+    /**
+     * Fully specified interval definition for backups.
+     * Next: pass to `backups(...).addInterval(...)`.
+     */
+    export type IntervalSpec = import("./sources/backMan").IntervalSpec;
+    /**
+     * Alias for interval specifications.
+     * Next: pass to `backups(...).addInterval(...)`.
+     */
+    export type IntervalPartial = import("./sources/backMan").IntervalPartial;
+    /**
+     * Fluent interval builder for schedules.
+     * Next: chain `.at(...)` or `.on(...)`, then pass to `backups(...).addInterval(...)`.
+     */
+    export type IntervalBuilder<
+      U extends import("./sources/backMan").IntervalUnit,
+      S extends
+        | "start"
+        | "yearSelected"
+        | "dateSelected"
+        | "timeSelected"
+        | "secondSelected",
+    > = import("./sources/backMan").IntervalBuilder<U, S>;
+    /**
+     * Weekday selector for interval schedules.
+     * Next: pass to `korm.interval.every("week").on(...)`.
+     */
+    export type Weekday = import("./sources/backMan").Weekday;
+    /**
+     * Weekday name for interval schedules.
+     * Next: pass to `korm.interval.every("week").on(...)`.
+     */
+    export type WeekdayName = import("./sources/backMan").WeekdayName;
+    /**
+     * Weekday index for interval schedules (0=Monday..6=Sunday).
+     * Next: pass to `korm.interval.every("week").on(...)`.
+     */
+    export type WeekdayIndex = import("./sources/backMan").WeekdayIndex;
+    /**
+     * Persisted item with pending changes.
+     * Next: call `.commit()` or include it in `korm.tx(...).persist()`.
+     */
+    export type UncommittedItem<T extends JSONable> =
+      import("./core/item").UncommittedItem<T>;
+    /**
+     * In-memory item awaiting `.create()`.
+     * Next: call `.create()` or include it in `korm.tx(...).persist()`.
+     */
+    export type FloatingItem<T extends JSONable> =
+      import("./core/item").FloatingItem<T>;
+    /**
+     * Persisted item in sync with the database.
+     * Next: call `.update(...)` or `.delete()`.
+     */
+    export type Item<T extends JSONable> = import("./core/item").Item<T>;
+    /**
+     * Item builder returned by `korm.item<T>(pool)`.
+     * Next: call `.from.data(...)`, `.from.query(...)`, `.from.rn(...)`, or `.empty()`.
+     */
+    export type UninitializedItem<T extends JSONable> =
+      import("./core/item").UninitializedItem<T>;
+    /**
+     * Resource Name (RN) type for typed references.
+     * Next: build with `korm.rn(...)` or store in item fields.
+     */
+    export type RN<T extends JSONable = JSONable> = import("./core/rn").RN<T>;
+    /**
+     * SQLite layer implementation.
+     * Next: pass `korm.layers.sqlite(...)` to `korm.pool().setLayers(...)`.
+     */
+    export type SqliteLayer = import("./sources").SqliteLayer;
+    /**
+     * Postgres layer implementation.
+     * Next: pass `korm.layers.pg(...)` to `korm.pool().setLayers(...)`.
+     */
+    export type PgLayer = import("./sources").PgLayer;
+    /**
+     * MySQL layer implementation.
+     * Next: pass `korm.layers.mysql(...)` to `korm.pool().setLayers(...)`.
+     */
+    export type MysqlLayer = import("./sources").MysqlLayer;
+    /**
+     * In-memory wrapper for encrypted values.
+     * Next: create via `korm.encrypt(...)`.
+     */
+    export type Encrypt<T extends JSONable> =
+      import("./security/encryption").Encrypt<T>;
+    /**
+     * Alias for password-hashed values.
+     * Next: create via `korm.password(...)`.
+     */
+    export type Password<T extends JSONable> =
+      import("./security/encryption").Password<T>;
+    /**
+     * Depot interface for file storage.
+     * Next: create with `korm.depots.*` and pass to `setDepots(...)`.
+     */
+    export type Depot = import("./depot/depot").Depot;
+    /**
+     * Blob-like payload accepted by depots, including readable streams.
+     * Next: pass to `korm.file(...)` when creating depot files.
+     */
+    export type DepotBlob = import("./depot/depotFile").DepotBlob;
+    /**
+     * Value accepted for depot file fields in item data.
+     * Next: use `korm.file(...)` or include it in item data.
+     */
+    export type DepotFileLike = import("./depot/depotFile").DepotFileLike;
+    /**
+     * Depot file state machine variants.
+     * Next: use with `DepotFile` helpers after resolving depot RNs.
+     */
+    export type DepotFileState = import("./depot/depotFile").DepotFileState;
+    /**
+     * S3 depot configuration options.
+     * Next: pass to `korm.depots.s3(...)`.
+     */
+    export type S3DepotOptions =
+      import("./depot/depots/s3Depot").S3DepotOptions;
+    /**
+     * WAL configuration options.
+     * Next: pass to `withWal(...)`.
+     */
+    export type WalMode = import("./wal/wal").WalMode;
+    /**
+     * WAL retention policy.
+     * Next: set the `retention` field in `withWal(...)`.
+     */
+    export type WalRetention = import("./wal/wal").WalRetention;
+    /**
+     * WAL operation record.
+     * Next: use when inspecting WAL data produced by `withWal(...)`.
+     */
+    export type WalOp = import("./wal/wal").WalOp;
+    /**
+     * WAL depot file operation record.
+     * Next: use when inspecting WAL depot operations.
+     */
+    export type WalDepotOp = import("./wal/wal").WalDepotOp;
+    /**
+     * WAL record envelope stored in the WAL depot.
+     * Next: use when reading WAL records generated by `withWal(...)`.
+     */
+    export type WalRecord = import("./wal/wal").WalRecord;
+    /**
+     * Opened layer pool instance.
+     * Next: call `.close()` when you are done.
+     */
+    export type LayerPool = import("./sources/layerPool").LayerPool;
+    /**
+     * Shared lock configuration options.
+     * Next: pass to `withLocks(...)`.
+     */
+    export type LockMode = import("./sources/lockStore").LockMode;
+    /**
+     * Pool metadata configuration.
+     * Next: pass to `withMeta(...)`.
+     */
+    export type PoolMetaMode = import("./sources/poolMeta").PoolMetaMode;
+  }
+}
 
 /**
  * Create a LayerPool from layers/depots and optional WAL configuration.

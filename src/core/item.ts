@@ -197,7 +197,7 @@ export class Item<T extends JSONable> {
     this.__EMPTY__ = options?.empty ?? false;
   }
 
-  /** Current data snapshot; may include resolved RN references if `resolvePaths` was used. */
+  /** Current data snapshot; may include resolved RN references if `korm.resolve(...)` was used. */
   get data(): T | undefined {
     return resolvedDataFor<T>(this, this._data);
   }
@@ -469,7 +469,7 @@ export class UninitializedItem<T extends JSONable> {
   public readonly from = {
     /**
      * Fetch a single item by item RN.
-     * Provide `resolvePaths` to materialize RN references in the returned data.
+     * Use `korm.resolve(...)` to materialize RN references in the returned data.
      */
     rn: async <const Paths extends readonly string[] = []>(
       rn: RN<T>,

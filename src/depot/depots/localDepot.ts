@@ -5,6 +5,38 @@ import { createDepotIdentifier } from "../depotIdent";
 import fs from "node:fs";
 import path from "node:path";
 
+function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "getReader" in value &&
+    typeof (value as ReadableStream).getReader === "function"
+  );
+}
+
+async function writeStreamToPath(
+  filePath: string,
+  stream: ReadableStream<Uint8Array>,
+): Promise<void> {
+  const writer = Bun.file(filePath).writer();
+  const reader = stream.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        writer.write(value);
+      }
+    }
+    await writer.end();
+  } catch (error) {
+    await writer.end(error instanceof Error ? error : new Error(String(error)));
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /**
  * Local filesystem depot.
  * Use `korm.depots.local(rootPath)` to create and include in a pool.
@@ -59,7 +91,11 @@ export class LocalDepot implements Depot {
     }
     const path = this._pathFromRn(file.rn);
     await this._ensureParentDir(path);
-    await Bun.write(path, file.file as Blob);
+    if (isReadableStream(file.file)) {
+      await writeStreamToPath(path, file.file);
+    } else {
+      await Bun.write(path, file.file as Blob);
+    }
     return path;
   }
 
@@ -167,7 +203,11 @@ export class LocalDepot implements Depot {
     const newFile = await edit(file);
     const path = this._pathFromRn(rn);
     await this._ensureParentDir(path);
-    await Bun.write(path, newFile.file as Blob);
+    if (isReadableStream(newFile.file)) {
+      await writeStreamToPath(path, newFile.file);
+    } else {
+      await Bun.write(path, newFile.file as Blob);
+    }
     return true;
   }
 

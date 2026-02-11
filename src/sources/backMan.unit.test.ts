@@ -6,6 +6,7 @@ import { BackMan } from "./backMan";
 import { korm } from "../korm";
 import { FloatingDepotFile } from "../depot/depotFile";
 import {
+  BACKUP_EXTENSION,
   buildBackupPrefixRn,
   buildBackupRn,
   parseBackupTimestamp,
@@ -105,7 +106,7 @@ describe("BackMan interval builder", () => {
         new Date("2024-01-03T00:00:00Z"),
       ];
       for (const stamp of stamps) {
-        const rn = buildBackupRn("backups", "main", stamp, "json");
+        const rn = buildBackupRn("backups", "main", stamp, BACKUP_EXTENSION);
         const file = new FloatingDepotFile(
           rn,
           new Blob(["{}"], { type: "application/json" }),

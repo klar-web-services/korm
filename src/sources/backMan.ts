@@ -1,10 +1,11 @@
 import crypto from "node:crypto";
 import { RN } from "../core/rn";
 import {
+  BackupEventReader,
   buildBackupPrefixRn,
   parseBackupTimestamp,
   type BackupContext,
-  type BackupPayload,
+  type BackupRestorePayload,
   type BackupRestoreOptions,
 } from "./backups";
 import type { Depot } from "../depot/depot";
@@ -1370,34 +1371,6 @@ export class BackMan {
     );
   }
 
-  private _parseBackupPayload(text: string): BackupPayload {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch (error) {
-      throw new Error("Backup payload is not valid JSON.");
-    }
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error("Backup payload is malformed.");
-    }
-    const payload = parsed as Partial<BackupPayload>;
-    if (payload.version !== 1) {
-      throw new Error(
-        `Unsupported backup payload version "${payload.version ?? "unknown"}".`,
-      );
-    }
-    if (
-      typeof payload.layerIdent !== "string" ||
-      typeof payload.layerType !== "string"
-    ) {
-      throw new Error("Backup payload is missing layer identifiers.");
-    }
-    if (!Array.isArray(payload.tables)) {
-      throw new Error("Backup payload tables are missing.");
-    }
-    return payload as BackupPayload;
-  }
-
   private async _applyRetention(layerIdent: string): Promise<void> {
     const retention = this._retentionForLayer(layerIdent);
     if (!retention || retention.mode === "all") return;
@@ -1482,37 +1455,43 @@ export class BackMan {
       );
     }
     const file = await this._depot.getFile(parsed);
-    const payload = this._parseBackupPayload(await file.text());
-    const layer = this._layers.get(payload.layerIdent);
+    const reader = new BackupEventReader(file.stream());
+    const headerEvent = await reader.next();
+    if (!headerEvent || headerEvent.t !== "header") {
+      throw new Error("Backup stream is missing a header event.");
+    }
+    const layer = this._layers.get(headerEvent.layerIdent);
     if (!layer) {
       throw new Error(
-        `Backup layer "${payload.layerIdent}" is not present in the pool.`,
+        `Backup layer "${headerEvent.layerIdent}" is not present in the pool.`,
       );
     }
-    if (layer.type !== payload.layerType) {
+    if (layer.type !== headerEvent.layerType) {
       throw new Error(
-        `Backup layer type "${payload.layerType}" does not match "${layer.type}".`,
+        `Backup layer type "${headerEvent.layerType}" does not match "${layer.type}".`,
       );
     }
     const restorer = layer as {
       restore?: (
-        payload: BackupPayload,
+        payload: BackupRestorePayload,
         options?: BackupRestoreOptions,
       ) => Promise<void> | void;
     };
     if (typeof restorer.restore !== "function") {
       throw new Error(
-        `Backup restore is not supported for layer "${payload.layerIdent}".`,
+        `Backup restore is not supported for layer "${headerEvent.layerIdent}".`,
       );
     }
     let release = () => {};
     if (this._locker) {
-      const lockId = stableUuidFromSeed(`backup-play:${payload.layerIdent}`);
+      const lockId = stableUuidFromSeed(
+        `backup-play:${headerEvent.layerIdent}`,
+      );
       const lockRn = RN.create("korm", "backupplay", lockId).unwrap();
       release = await this._locker.acquire(lockRn);
     }
     try {
-      await restorer.restore(payload, options);
+      await restorer.restore({ header: headerEvent, reader }, options);
     } finally {
       release();
     }

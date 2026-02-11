@@ -6,32 +6,66 @@ import { RN } from "../core/rn";
 import { LocalDepot } from "./depots/localDepot";
 import { FloatingDepotFile } from "./depotFile";
 
+function makeStream(text: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+      controller.close();
+    },
+  });
+}
+
 describe("LocalDepot", () => {
-    test("creates, edits, lists, and deletes files", async () => {
-        const root = await fs.mkdtemp(path.join(os.tmpdir(), "korm-local-"));
-        const depot = new LocalDepot(root);
-        const rn = RN.create(`[rn][depot::${depot.identifier}]:alpha:bravo.txt`).unwrap();
-        const prefix = RN.create(`[rn][depot::${depot.identifier}]:alpha:*`).unwrap();
-        const rootPrefix = RN.create(`[rn][depot::${depot.identifier}]:*`).unwrap();
+  test("creates, edits, lists, and deletes files", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "korm-local-"));
+    const depot = new LocalDepot(root);
+    const rn = RN.create(
+      `[rn][depot::${depot.identifier}]:alpha:bravo.txt`,
+    ).unwrap();
+    const streamRn = RN.create(
+      `[rn][depot::${depot.identifier}]:alpha:stream.txt`,
+    ).unwrap();
+    const prefix = RN.create(
+      `[rn][depot::${depot.identifier}]:alpha:*`,
+    ).unwrap();
+    const rootPrefix = RN.create(`[rn][depot::${depot.identifier}]:*`).unwrap();
 
-        try {
-            await depot.createFile(new FloatingDepotFile(rn, new Blob(["hello"])));
-            const files = await depot.listFiles(prefix);
-            expect(files.length).toBe(1);
-            expect(await files[0]!.text()).toBe("hello");
+    try {
+      await depot.createFile(new FloatingDepotFile(rn, new Blob(["hello"])));
+      const files = await depot.listFiles(prefix);
+      expect(files.length).toBe(1);
+      expect(await files[0]!.text()).toBe("hello");
 
-            const dirs = await depot.listDirs(rootPrefix);
-            expect(dirs).toContain("alpha");
+      const dirs = await depot.listDirs(rootPrefix);
+      expect(dirs).toContain("alpha");
 
-            await depot.editFile(rn, async () => new FloatingDepotFile(rn, new Blob(["updated"])));
-            const updated = await depot.getFile(rn);
-            expect(await updated.text()).toBe("updated");
+      await depot.editFile(
+        rn,
+        async () => new FloatingDepotFile(rn, new Blob(["updated"])),
+      );
+      const updated = await depot.getFile(rn);
+      expect(await updated.text()).toBe("updated");
 
-            expect(await depot.deleteFile(rn)).toBe(true);
-            const afterDelete = await depot.listFiles(prefix);
-            expect(afterDelete.length).toBe(0);
-        } finally {
-            await fs.rm(root, { recursive: true, force: true });
-        }
-    });
+      await depot.createFile(
+        new FloatingDepotFile(streamRn, makeStream("streamed")),
+      );
+      const streamed = await depot.getFile(streamRn);
+      expect(await streamed.text()).toBe("streamed");
+
+      await depot.editFile(
+        streamRn,
+        async () => new FloatingDepotFile(streamRn, makeStream("streamed-2")),
+      );
+      const streamedUpdated = await depot.getFile(streamRn);
+      expect(await streamedUpdated.text()).toBe("streamed-2");
+
+      expect(await depot.deleteFile(rn)).toBe(true);
+      expect(await depot.deleteFile(streamRn)).toBe(true);
+      const afterDelete = await depot.listFiles(prefix);
+      expect(afterDelete.length).toBe(0);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });

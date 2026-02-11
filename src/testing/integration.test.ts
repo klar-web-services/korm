@@ -20,6 +20,7 @@ import { DepotFile, isDepotFile, type DepotFileLike } from "../depot/depotFile";
 import type { LayerPool } from "../sources/layerPool";
 import type { WalDepotOp, WalRecord } from "../wal/wal";
 import { BackMan } from "../sources/backMan";
+import { BackupEventReader } from "../sources/backups";
 
 function loadEnvIfMissing(): void {
   if (process.env.TESTING_PG_URL && process.env.TESTING_MYSQL_URL) return;
@@ -122,6 +123,10 @@ type MysqlColumnExpectation = {
 
 function tableName(namespace: string, kind: string): string {
   return `__items__${namespace}__${kind}`;
+}
+
+function pgTableName(name: string): string {
+  return name.length > 63 ? name.slice(0, 63) : name;
 }
 
 function mysqlTableName(name: string): string {
@@ -517,14 +522,65 @@ async function waitForBackupPayloads(
   const parseFiles = async () => {
     const files = await depot.listFiles(rn);
     const payloads = await Promise.all(
-      files.map(
-        async (file) =>
-          JSON.parse(await file.text()) as {
-            layerIdent: string;
-            layerType: string;
-            tables: Array<{ name: string; rows: Record<string, unknown>[] }>;
-          },
-      ),
+      files.map(async (file) => {
+        const text = await file.text();
+        const lines = text
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean);
+        let header: { layerIdent: string; layerType: string } | undefined;
+        const tables = new Map<string, Record<string, unknown>[]>();
+        let currentTable: string | undefined;
+        let hasEnd = false;
+        for (const line of lines) {
+          const event = JSON.parse(line) as {
+            t?: string;
+            layerIdent?: string;
+            layerType?: string;
+            name?: string;
+            table?: string;
+            row?: Record<string, unknown>;
+          };
+          if (event.t === "header") {
+            header = {
+              layerIdent: String(event.layerIdent ?? ""),
+              layerType: String(event.layerType ?? ""),
+            };
+            continue;
+          }
+          if (event.t === "end") {
+            hasEnd = true;
+            continue;
+          }
+          if (event.t === "table") {
+            currentTable = event.name;
+            if (currentTable && !tables.has(currentTable)) {
+              tables.set(currentTable, []);
+            }
+            continue;
+          }
+          if (event.t === "row") {
+            const tableName = event.table ?? currentTable ?? "";
+            if (!tables.has(tableName)) {
+              tables.set(tableName, []);
+            }
+            if (event.row) {
+              tables.get(tableName)!.push(event.row);
+            }
+          }
+        }
+        if (!header || !hasEnd) {
+          return null;
+        }
+        return {
+          layerIdent: header?.layerIdent ?? "",
+          layerType: header?.layerType ?? "",
+          tables: Array.from(tables.entries()).map(([name, rows]) => ({
+            name,
+            rows,
+          })),
+        };
+      }),
     );
     const map = new Map<
       string,
@@ -534,6 +590,9 @@ async function waitForBackupPayloads(
       }
     >();
     for (const payload of payloads) {
+      if (!payload || !payload.layerIdent) {
+        continue;
+      }
       if (!map.has(payload.layerIdent)) {
         map.set(payload.layerIdent, payload);
       }
@@ -548,6 +607,114 @@ async function waitForBackupPayloads(
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return await parseFiles();
+}
+
+async function waitForBackupSchedules(
+  layer: { _db: { prepare: (sql: string) => { all: () => unknown[] } } },
+  layerIdents: string[],
+  timeoutMs: number = 15_000,
+): Promise<Map<string, { next_run_at?: number; last_run_at?: number | null }>> {
+  const start = Date.now();
+  const want = new Set(layerIdents);
+  while (Date.now() - start < timeoutMs) {
+    const scheduleRows = layer._db
+      .prepare(
+        `SELECT schedule_id, layer_ident, next_run_at, last_run_at FROM "__korm_backups__"`,
+      )
+      .all() as Array<{
+      layer_ident?: string;
+      next_run_at?: number;
+      last_run_at?: number | null;
+    }>;
+    const scheduleByLayer = new Map<
+      string,
+      { next_run_at?: number; last_run_at?: number | null }
+    >(scheduleRows.map((row) => [String(row.layer_ident ?? ""), row]));
+    let ready = true;
+    for (const ident of want) {
+      const row = scheduleByLayer.get(ident);
+      if (!row || row.last_run_at === null || row.last_run_at === undefined) {
+        ready = false;
+        break;
+      }
+    }
+    if (ready) {
+      return scheduleByLayer;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return new Map();
+}
+
+async function waitForBackupFiles(
+  depot: { listFiles: (rn: RN) => Promise<DepotFile[]> },
+  rn: RN,
+  minCount: number,
+  timeoutMs: number = 15_000,
+): Promise<DepotFile[]> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const files = await depot.listFiles(rn);
+    if (files.length >= minCount) return files;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return await depot.listFiles(rn);
+}
+
+async function readBackupSummary(
+  file: DepotFile,
+  tableByLayer: Map<string, string>,
+): Promise<{ layerIdent: string; rowCount: number; complete: boolean }> {
+  const reader = new BackupEventReader(file.stream());
+  const header = await reader.next();
+  if (!header || header.t !== "header") {
+    throw new Error("Backup stream is missing a header event.");
+  }
+  const targetTable = tableByLayer.get(header.layerIdent) ?? "";
+  let count = 0;
+  let hasEnd = false;
+  while (true) {
+    const event = await reader.next();
+    if (!event) break;
+    if (event.t === "row" && event.table === targetTable) {
+      count += 1;
+    }
+    if (event.t === "end") {
+      hasEnd = true;
+    }
+  }
+  return { layerIdent: header.layerIdent, rowCount: count, complete: hasEnd };
+}
+
+async function waitForBackupSummaries(
+  depot: { listFiles: (rn: RN) => Promise<DepotFile[]> },
+  rn: RN,
+  tableByLayer: Map<string, string>,
+  timeoutMs: number = 15_000,
+): Promise<Map<string, { rowCount: number }>> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const files = await depot.listFiles(rn);
+    if (files.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      continue;
+    }
+    const summaries = await Promise.all(
+      files.map((file) => readBackupSummary(file, tableByLayer)),
+    );
+    const completed = summaries.filter((summary) => summary.complete);
+    const map = new Map<string, { rowCount: number }>(
+      completed.map((summary) => [
+        summary.layerIdent,
+        { rowCount: summary.rowCount },
+      ]),
+    );
+    if (map.size >= tableByLayer.size) {
+      return map;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return new Map();
 }
 
 async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
@@ -698,19 +865,11 @@ describe("layers integration", () => {
       expect((pgDump?.rows[0] as any)?.label).toBe("backup-pg");
       expect((mysqlDump?.rows[0] as any)?.label).toBe("backup-mysql");
 
-      const scheduleRows = backupSqlite._db
-        .prepare(
-          `SELECT schedule_id, layer_ident, next_run_at, last_run_at FROM "__korm_backups__"`,
-        )
-        .all() as Array<{
-        layer_ident?: string;
-        next_run_at?: number;
-        last_run_at?: number | null;
-      }>;
-      const scheduleByLayer = new Map<
-        string,
-        { next_run_at?: number; last_run_at?: number | null }
-      >(scheduleRows.map((row) => [String(row.layer_ident ?? ""), row]));
+      const scheduleByLayer = await waitForBackupSchedules(
+        backupSqlite,
+        ["sqlite", "pg", "mysql"],
+        15_000,
+      );
       for (const ident of ["sqlite", "pg", "mysql"] as const) {
         const row = scheduleByLayer.get(ident);
         expect(row).toBeTruthy();
@@ -722,6 +881,137 @@ describe("layers integration", () => {
       rmSync(root, { recursive: true, force: true });
     }
   }, 45_000);
+
+  test("backups stream large tables across layers", async () => {
+    const root = mkdtempSync(resolve(os.tmpdir(), "korm-backups-huge-"));
+    const depotRoot = resolve(root, "depot");
+    const sqlitePath = resolve(root, "meta.sqlite");
+
+    const backupDepot = korm.depots.local(depotRoot);
+    const backupSqlite = korm.layers.sqlite(sqlitePath);
+    const backupPg = korm.layers.pg(process.env.TESTING_PG_URL!);
+    const backupMysql = korm.layers.mysql(process.env.TESTING_MYSQL_URL!);
+
+    const backupPool = korm
+      .pool()
+      .setLayers(
+        korm.use.layer(backupSqlite).as("sqlite"),
+        korm.use.layer(backupPg).as("pg"),
+        korm.use.layer(backupMysql).as("mysql"),
+      )
+      .setDepots(korm.use.depot(backupDepot).as("backups"))
+      .withMeta(korm.target.layer("sqlite"))
+      .open();
+
+    const hugeCount = 2000;
+    try {
+      await backupPool.ensureMetaReady();
+
+      const sqliteNames = makeNames("backuphuge_sqlite");
+      const pgNames = makeNames("backuphuge_pg");
+      const mysqlNames = makeNames("backuphuge_mysql");
+
+      const sqliteTable = tableName(sqliteNames.namespace, sqliteNames.kind);
+      const pgTable = tableName(pgNames.namespace, pgNames.kind);
+      const mysqlTable = tableName(mysqlNames.namespace, mysqlNames.kind);
+      const pgActual = pgTableName(pgTable);
+
+      const sqliteRes = await korm
+        .item<SimpleRecord>(backupPool)
+        .from.data({
+          namespace: sqliteNames.namespace,
+          kind: sqliteNames.kind,
+          mods: fromMod("sqlite"),
+          data: { label: "seed-sqlite", score: 0 },
+        })
+        .create();
+      expect(sqliteRes.isOk()).toBe(true);
+
+      const pgRes = await korm
+        .item<SimpleRecord>(backupPool)
+        .from.data({
+          namespace: pgNames.namespace,
+          kind: pgNames.kind,
+          mods: fromMod("pg"),
+          data: { label: "seed-pg", score: 0 },
+        })
+        .create();
+      expect(pgRes.isOk()).toBe(true);
+
+      const mysqlRes = await korm
+        .item<SimpleRecord>(backupPool)
+        .from.data({
+          namespace: mysqlNames.namespace,
+          kind: mysqlNames.kind,
+          mods: fromMod("mysql"),
+          data: { label: "seed-mysql", score: 0 },
+        })
+        .create();
+      expect(mysqlRes.isOk()).toBe(true);
+
+      const sqliteStmt = backupSqlite._db.prepare(
+        `INSERT INTO "${sqliteTable}" ("rnId", "label", "score") VALUES (?, ?, ?)`,
+      );
+      for (let i = 0; i < hugeCount; i += 1) {
+        sqliteStmt.run(randomUUID(), `bulk-sqlite-${i}`, i + 1);
+      }
+
+      for (let i = 0; i < hugeCount; i += 1) {
+        await backupPg._db.unsafe(
+          `INSERT INTO "${pgActual}" ("rnId", "label", "score") VALUES ($1, $2, $3)`,
+          [randomUUID(), `bulk-pg-${i}`, i + 1],
+        );
+      }
+
+      const mysqlActual = backupMysql.resolveTableName(mysqlTable);
+      await backupMysql._pool.query("START TRANSACTION");
+      try {
+        const batchSize = 250;
+        for (let i = 0; i < hugeCount; i += batchSize) {
+          const rows: string[] = [];
+          const params: Array<string | number> = [];
+          const upper = Math.min(hugeCount, i + batchSize);
+          for (let j = i; j < upper; j += 1) {
+            rows.push("(?, ?, ?)");
+            params.push(randomUUID(), `bulk-mysql-${j}`, j + 1);
+          }
+          await backupMysql._pool.query(
+            `INSERT INTO \`${mysqlActual}\` (\`rnId\`, \`label\`, \`score\`) VALUES ${rows.join(", ")}`,
+            params,
+          );
+        }
+        await backupMysql._pool.query("COMMIT");
+      } catch (error) {
+        await backupMysql._pool.query("ROLLBACK");
+        throw error;
+      }
+
+      const manager = new BackMan();
+      manager.addInterval("*", korm.interval.every("minute").runNow());
+      backupPool.configureBackups("backups", manager);
+
+      const backupPrefix = korm.rn(`[rn][depot::backups]:__korm_backups__:*`);
+      const tableByLayer = new Map<string, string>([
+        ["sqlite", sqliteTable],
+        ["pg", pgActual],
+        ["mysql", mysqlActual],
+      ]);
+      const rowCounts = await waitForBackupSummaries(
+        backupDepot,
+        backupPrefix,
+        tableByLayer,
+        30_000,
+      );
+
+      for (const ident of ["sqlite", "pg", "mysql"] as const) {
+        const entry = rowCounts.get(ident);
+        expect(entry?.rowCount).toBe(hugeCount + 1);
+      }
+    } finally {
+      await backupPool.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }, 90_000);
 
   for (const ident of ["sqlite", "pg", "mysql"] as const) {
     test(`${ident} basic CRUD + JSON queries`, async () => {

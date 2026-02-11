@@ -1,21 +1,5 @@
 import { resolve } from "node:path";
-import {
-  korm,
-  BackMan,
-  // All these types are exposed
-  type UncommittedItem, // Item types
-  type FloatingItem,
-  type Item,
-  type UninitializedItem,
-  type RN, // Resource Name type
-  type SqliteLayer, // Source layers
-  type PgLayer,
-  type MysqlLayer,
-  type Encrypt, // Symmetric encryption type
-  type Password, // Password encryption type
-  type DepotFileLike,
-  // More layers soon
-} from ".."; // In your app, that would be 'from "@fkws/korm"'
+import { korm, BackMan } from ".."; // In your app, that would be 'from "@fkws/korm"'
 
 // --- SETUP ---
 
@@ -108,7 +92,7 @@ const pool = korm
 type User = {
   firstName: string;
   lastName: string;
-  password: Password<string>; // Mark for password encryption
+  password: korm.types.Password<string>; // Mark for password encryption
   username: string;
 };
 
@@ -118,9 +102,9 @@ type Car = {
   year: number;
   type: "sedan" | "suv";
   color: string;
-  owner: RN<User>; // Reference to another Item by RN
+  owner: korm.types.RN<User>; // Reference to another Item by RN
   registered: boolean;
-  registrationNumber: Encrypt<string>; // sensitive data, mark for symmetric encryption and redaction!
+  registrationNumber: korm.types.Encrypt<string>; // sensitive data, mark for symmetric encryption and redaction!
 };
 
 // --- USAGE ---
@@ -313,7 +297,7 @@ const fredRN = (
 ).unwrap()[0]!.rn!;
 
 type UserWarning = {
-  user: RN<User>;
+  user: korm.types.RN<User>;
   warningText: string;
 };
 
@@ -400,9 +384,9 @@ console.dir(theCarAgain.data?.owner.lastName);
 
 // Let's create an invoice for Fred that points to a depot file.
 type Invoice = {
-  user: RN<User>;
+  user: korm.types.RN<User>;
   total: number;
-  pdf: DepotFileLike;
+  pdf: korm.types.DepotFileLike;
 };
 
 const invoicePdf = korm.file({
@@ -447,14 +431,16 @@ await pool.close(); // Close the pool, so the program exits. If your program doe
 const restoreManager = new BackMan();
 const restorePool = korm
   .pool()
-  .setLayers(korm.use.layer(korm.layers.sqlite("./restore.sqlite"), "restore"))
+  .setLayers(
+    korm.use.layer(korm.layers.sqlite("./restore.sqlite")).as("restore"),
+  )
   .setDepots(korm.use.depot(walDepot).as("walDepot"))
   .withMeta(korm.target.layer("restore"))
   .open();
 restorePool.configureBackups("walDepot", restoreManager);
 await restoreManager.play(
   korm.rn(
-    "[rn][depot::walDepot]:__korm_backups__:userdb:20240102T030405Z:backup-00000000-0000-4000-8000-000000000000.json",
+    "[rn][depot::walDepot]:__korm_backups__:userdb:20240102T030405Z:backup-00000000-0000-4000-8000-000000000000.ndjson",
   ),
   { mode: "replace" },
 );

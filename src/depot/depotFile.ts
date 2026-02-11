@@ -7,14 +7,31 @@ type SliceableBlob = {
   slice(begin?: number, end?: number, contentType?: string): Blob;
 };
 
-/** File-like payload accepted by depots. */
-export type DepotBlob = Bun.BunFile | Bun.S3File | Blob;
+function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "getReader" in value &&
+    typeof (value as ReadableStream).getReader === "function"
+  );
+}
+
+/**
+ * File-like payload accepted by depots, including readable byte streams.
+ * Next: pass to `korm.file(...)` or `DepotFile.update(...)` to upload.
+ */
+export type DepotBlob =
+  | Bun.BunFile
+  | Bun.S3File
+  | Blob
+  | ReadableStream<Uint8Array>;
 /** Lifecycle state for depot files. */
 export type DepotFileState = "floating" | "committed" | "uncommitted";
 
 /**
  * Base class for depot file wrappers.
  * Implements common file helpers and RN serialization.
+ * Next: use `DepotFile`, `FloatingDepotFile`, or `UncommittedDepotFile`.
  */
 export abstract class DepotFileBase {
   readonly __DEPOT_FILE__: true = true;
@@ -35,27 +52,51 @@ export abstract class DepotFileBase {
     this.state = state;
   }
 
-  /** Serialize to the RN string when stored inside item data. */
+  /**
+   * Serialize to the RN string when stored inside item data.
+   * Next: resolve the RN via `korm.resolve(...)` or `depot.getFile(...)`.
+   */
   toJSON(): JSONable {
     return this.rn.value();
   }
 
-  /** Read file content as ArrayBuffer. */
+  /**
+   * Read file content as ArrayBuffer.
+   * Next: parse binary payloads or pass to storage APIs.
+   */
   async arrayBuffer(): Promise<ArrayBuffer> {
+    if (isReadableStream(this.file)) {
+      return await new Response(this.file).arrayBuffer();
+    }
     return await this.file.arrayBuffer();
   }
 
-  /** Read file content as text. */
+  /**
+   * Read file content as text.
+   * Next: parse or display the returned string.
+   */
   async text(): Promise<string> {
+    if (isReadableStream(this.file)) {
+      return await new Response(this.file).text();
+    }
     return await this.file.text();
   }
 
-  /** Stream file content. */
-  stream(): ReadableStream<Uint8Array<ArrayBuffer>> {
+  /**
+   * Stream file content.
+   * Next: pipe the stream to a response or writer.
+   */
+  stream(): ReadableStream<Uint8Array> {
+    if (isReadableStream(this.file)) {
+      return this.file;
+    }
     return this.file.stream();
   }
 
-  /** Slice the underlying Blob if supported. */
+  /**
+   * Slice the underlying Blob if supported.
+   * Next: call `.text()` or `.arrayBuffer()` on the returned Blob.
+   */
   slice(begin?: number, end?: number, contentType?: string): Blob {
     const sliceable = this.file as SliceableBlob | undefined;
     if (sliceable && typeof sliceable.slice === "function") {
@@ -68,10 +109,13 @@ export abstract class DepotFileBase {
     depth: number,
     options: util.InspectOptionsStylized,
   ): string {
+    const fileLabel = isReadableStream(this.file)
+      ? "[stream]"
+      : ((this.file as { name?: string }).name ?? "[blob]");
     const preview = {
       rn: this.rn.value(),
       state: this.state,
-      file: (this.file as { name?: string }).name ?? "[blob]",
+      file: fileLabel,
     };
     return `DepotFile ${util.inspect(preview, options)}`;
   }
@@ -88,7 +132,7 @@ export class FloatingDepotFile extends DepotFileBase {
 
   /**
    * Upload the file to the depot identified by the RN.
-   * Next: use the returned DepotFile to update or read it.
+   * Next: use the returned DepotFile to read or update the stored file.
    */
   async create(pool: LayerPool): Promise<DepotFile> {
     if (!this.rn.isDepot() || this.rn.pointsTo() !== "depotFile") {
@@ -96,7 +140,7 @@ export class FloatingDepotFile extends DepotFileBase {
     }
     const depot = pool.findDepotForRn(this.rn);
     await depot.createFile(this);
-    return new DepotFile(this.rn, this.file);
+    return await depot.getFile(this.rn);
   }
 }
 
@@ -183,6 +227,7 @@ export class UncommittedDepotFile extends DepotFileBase {
   /**
    * Persist the updated file to the depot.
    * Returns a committed DepotFile.
+   * Next: call `.update(...)` or `.delete(pool)` on the returned file.
    */
   async commit(pool: LayerPool): Promise<DepotFile> {
     if (!this.rn.isDepot() || this.rn.pointsTo() !== "depotFile") {
@@ -190,14 +235,20 @@ export class UncommittedDepotFile extends DepotFileBase {
     }
     const depot = pool.findDepotForRn(this.rn);
     await depot.createFile(this);
-    return new DepotFile(this.rn, this.file);
+    return await depot.getFile(this.rn);
   }
 }
 
-/** Any depot file wrapper (floating, committed, or uncommitted). */
+/**
+ * Any depot file wrapper (floating, committed, or uncommitted).
+ * Next: pass to `persist` operations or resolve to a committed file.
+ */
 export type DepotFileLike = DepotFileBase;
 
-/** Type guard for depot file wrappers. */
+/**
+ * Type guard for depot file wrappers.
+ * Next: use the narrowed type with depot helpers or item persistence.
+ */
 export function isDepotFile(value: unknown): value is DepotFileBase {
   return Boolean(
     value &&

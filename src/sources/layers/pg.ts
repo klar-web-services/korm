@@ -24,12 +24,13 @@ import type { ColumnKind } from "../../core/columnKind";
 import type { RN } from "../../core/rn";
 import { safeAssign } from "../../core/safeObject";
 import {
-  buildBackupPayload,
+  BACKUP_EXTENSION,
+  buildBackupHeaderEvent,
   buildBackupRn,
-  serializeBackupPayload,
+  streamBackupEvents,
   type BackupContext,
-  type BackupPayload,
   type BackupRestoreOptions,
+  type BackupRestorePayload,
 } from "../backups";
 
 const PG_RN_DOMAIN = "korm_rn_ref_text";
@@ -80,35 +81,54 @@ export class PgLayer implements SourceLayer {
              WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
              AND (table_name LIKE '__items__%' OR table_name = '__korm_meta__' OR table_name = '__korm_pool__')`,
     )) as Array<{ table_schema: string; table_name: string }>;
-    const dumps: Array<{ name: string; rows: Record<string, unknown>[] }> = [];
-    for (const row of tables) {
-      const safeSchema = this._quoteIdent(row.table_schema);
-      const safeTable = this._quoteIdent(row.table_name);
-      const safeName = `${safeSchema}.${safeTable}`;
-      const rows = (await this._db.unsafe(
-        `SELECT * FROM ${safeName}`,
-      )) as Record<string, unknown>[];
-      dumps.push({ name: row.table_name, rows });
-    }
-    const payload = buildBackupPayload("pg", context.layerIdent, dumps, now);
     const rn = buildBackupRn(
       context.depotIdent,
       context.layerIdent,
       now,
-      "json",
+      BACKUP_EXTENSION,
     );
-    const file = new FloatingDepotFile(rn, serializeBackupPayload(payload));
+    const events = async function* (
+      self: PgLayer,
+    ): AsyncGenerator<
+      | ReturnType<typeof buildBackupHeaderEvent>
+      | { t: "table"; name: string }
+      | { t: "row"; table: string; row: Record<string, unknown> }
+      | { t: "endTable"; name: string }
+      | { t: "end" }
+    > {
+      yield buildBackupHeaderEvent("pg", context.layerIdent, now);
+      for (const row of tables) {
+        const safeSchema = self._quoteIdent(row.table_schema);
+        const safeTable = self._quoteIdent(row.table_name);
+        const safeName = `${safeSchema}.${safeTable}`;
+        const orderBy = row.table_name.startsWith("__items__")
+          ? self._quoteIdent("rnId")
+          : undefined;
+        yield { t: "table", name: row.table_name };
+        for await (const item of self._iterateBackupRows(safeName, orderBy)) {
+          yield {
+            t: "row",
+            table: row.table_name,
+            row: item,
+          };
+        }
+        yield { t: "endTable", name: row.table_name };
+      }
+      yield { t: "end" };
+    };
+    const stream = streamBackupEvents(events(this));
+    const file = new FloatingDepotFile(rn, stream);
     await context.depot.createFile(file);
   }
 
   /** @internal */
   async restore(
-    payload: BackupPayload,
+    payload: BackupRestorePayload,
     options?: BackupRestoreOptions,
   ): Promise<void> {
-    if (payload.layerType !== "pg") {
+    if (payload.header.layerType !== "pg") {
       throw new Error(
-        `Backup payload layer type "${payload.layerType}" does not match pg.`,
+        `Backup payload layer type "${payload.header.layerType}" does not match pg.`,
       );
     }
     await this._ensureDomains();
@@ -116,106 +136,218 @@ export class PgLayer implements SourceLayer {
     const poolTable = "__korm_pool__";
     const metaTable = PG_META_TABLE;
     let schemaChanged = false;
+    type TableState = {
+      rawName: string;
+      safeName: string;
+      created: boolean;
+      columnTypes: Map<string, string>;
+      pendingColumns: Set<string>;
+      isItems: boolean;
+    };
 
-    for (const table of payload.tables) {
-      const rawName = table.name;
-      const safeName = this._quoteIdent(rawName);
-      const rows = table.rows ?? [];
+    const ensurePoolTable = async (state?: TableState): Promise<void> => {
+      await this._unsafe(
+        `CREATE TABLE IF NOT EXISTS "${poolTable}" (
+                    "id" TEXT PRIMARY KEY,
+                    "config" JSONB NOT NULL,
+                    "created_at" BIGINT NOT NULL,
+                    "updated_at" BIGINT NOT NULL
+                )`,
+      );
+      schemaChanged = true;
+      if (state) {
+        state.created = true;
+        state.columnTypes.set("id", "TEXT");
+        state.columnTypes.set("config", "JSONB");
+        state.columnTypes.set("created_at", "BIGINT");
+        state.columnTypes.set("updated_at", "BIGINT");
+      }
+    };
 
-      if (rawName === poolTable) {
+    const ensureMetaTable = async (state?: TableState): Promise<void> => {
+      await this._ensureMetaTable();
+      schemaChanged = true;
+      if (state) {
+        state.created = true;
+        state.columnTypes.set("table_name", "TEXT");
+        state.columnTypes.set("column_name", "TEXT");
+        state.columnTypes.set("kind", "TEXT");
+      }
+    };
+
+    const createTable = async (state: TableState): Promise<void> => {
+      if (state.created) return;
+      if (state.columnTypes.size === 0 && state.pendingColumns.size > 0) {
+        for (const key of state.pendingColumns) {
+          if (!state.columnTypes.has(key)) {
+            state.columnTypes.set(key, "TEXT");
+          }
+        }
+        state.pendingColumns.clear();
+      }
+      if (state.columnTypes.size === 0) return;
+      const columnDefs: string[] = [];
+      for (const [key, type] of state.columnTypes) {
+        const columnName = this._quoteIdent(key);
+        if (state.isItems && key === "rnId") {
+          columnDefs.push(`${columnName} TEXT PRIMARY KEY`);
+        } else {
+          columnDefs.push(`${columnName} ${type}`);
+        }
+      }
+      if (columnDefs.length === 0) return;
+      await this._unsafe(
+        `CREATE TABLE IF NOT EXISTS ${state.safeName} (${columnDefs.join(", ")})`,
+      );
+      state.created = true;
+      schemaChanged = true;
+    };
+
+    const addColumn = async (
+      state: TableState,
+      key: string,
+      type: string,
+    ): Promise<void> => {
+      if (state.columnTypes.has(key)) return;
+      const columnName = this._quoteIdent(key);
+      if (state.created) {
         await this._unsafe(
-          `CREATE TABLE IF NOT EXISTS "${poolTable}" (
-                        "id" TEXT PRIMARY KEY,
-                        "config" JSONB NOT NULL,
-                        "created_at" BIGINT NOT NULL,
-                        "updated_at" BIGINT NOT NULL
-                    )`,
+          `ALTER TABLE ${state.safeName} ADD COLUMN ${columnName} ${type}`,
         );
         schemaChanged = true;
-      } else if (rawName === metaTable) {
-        await this._ensureMetaTable();
-      } else if ((await this._getTableInfo(rawName)).length === 0) {
-        const columns = new Set<string>();
-        for (const row of rows) {
-          for (const key of Object.keys(row)) {
-            columns.add(key);
-          }
-        }
-        if (rawName.startsWith("__items__") && !columns.has("rnId")) {
-          columns.add("rnId");
-        }
-        const columnDefs: string[] = [];
-        for (const key of columns) {
-          const columnName = this._quoteIdent(key);
-          if (rawName.startsWith("__items__") && key === "rnId") {
-            columnDefs.push(`${columnName} TEXT PRIMARY KEY`);
-          } else {
-            columnDefs.push(
-              `${columnName} ${this._inferBackupPgType(rows, key)}`,
-            );
-          }
-        }
-        if (columnDefs.length > 0) {
-          await this._unsafe(
-            `CREATE TABLE IF NOT EXISTS ${safeName} (${columnDefs.join(", ")})`,
-          );
-          schemaChanged = true;
-        }
       }
+      state.columnTypes.set(key, type);
+    };
 
+    const ensureRnId = async (state: TableState): Promise<void> => {
+      if (!state.isItems || state.columnTypes.has("rnId")) return;
+      await addColumn(state, "rnId", "TEXT");
+    };
+
+    const initTableState = async (rawName: string): Promise<TableState> => {
+      const safeName = this._quoteIdent(rawName);
       const tableInfo = await this._getTableInfo(rawName, { force: true });
-      if (tableInfo.length === 0) {
-        continue;
-      }
-      const existing = new Set(tableInfo.map((col) => col.name));
-      const missing = new Set<string>();
-      for (const row of rows) {
-        for (const key of Object.keys(row)) {
-          if (!existing.has(key)) {
-            missing.add(key);
-          }
-        }
-      }
-      if (rawName.startsWith("__items__") && !existing.has("rnId")) {
-        missing.add("rnId");
-      }
-      for (const key of missing) {
-        const columnName = this._quoteIdent(key);
-        if (rawName.startsWith("__items__") && key === "rnId") {
-          await this._unsafe(
-            `ALTER TABLE ${safeName} ADD COLUMN ${columnName} TEXT`,
-          );
-        } else {
-          await this._unsafe(
-            `ALTER TABLE ${safeName} ADD COLUMN ${columnName} ${this._inferBackupPgType(rows, key)}`,
-          );
-        }
-        schemaChanged = true;
+      const columnTypes = new Map<string, string>(
+        tableInfo.map((col) => [
+          col.name,
+          (col.domainName || col.dataType || "TEXT").toUpperCase(),
+        ]),
+      );
+      const state: TableState = {
+        rawName,
+        safeName,
+        created: tableInfo.length > 0,
+        columnTypes,
+        pendingColumns: new Set<string>(),
+        isItems: rawName.startsWith("__items__"),
+      };
+
+      if (rawName === poolTable && !state.created) {
+        await ensurePoolTable(state);
+      } else if (rawName === metaTable && !state.created) {
+        await ensureMetaTable(state);
       }
 
-      if (mode === "replace") {
+      await ensureRnId(state);
+
+      if (mode === "replace" && state.created) {
         await this._unsafe(`DELETE FROM ${safeName}`);
       }
-      if (rows.length === 0) {
-        continue;
-      }
-      const columnSet = new Set<string>();
-      for (const row of rows) {
-        for (const key of Object.keys(row)) {
-          columnSet.add(key);
+
+      return state;
+    };
+
+    const finalizeTable = async (state: TableState | null): Promise<void> => {
+      if (!state) return;
+      if (!state.created) {
+        if (state.isItems && !state.columnTypes.has("rnId")) {
+          state.columnTypes.set("rnId", "TEXT");
         }
+        await createTable(state);
       }
-      if (columnSet.size === 0) {
+      if (state.pendingColumns.size > 0) {
+        for (const key of state.pendingColumns) {
+          await addColumn(state, key, "TEXT");
+        }
+        state.pendingColumns.clear();
+      }
+    };
+
+    let current: TableState | null = null;
+
+    while (true) {
+      const event = await payload.reader.next();
+      if (!event) break;
+      if (event.t === "header") {
+        throw new Error("Unexpected backup header event during restore.");
+      }
+      if (event.t === "table") {
+        await finalizeTable(current);
+        current = await initTableState(event.name);
         continue;
       }
-      const columns = Array.from(columnSet);
-      const columnList = columns.map((key) => this._quoteIdent(key)).join(", ");
-      const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(", ");
-      let insertString = `INSERT INTO ${safeName} (${columnList}) VALUES (${placeholders})`;
-      if (mode === "merge") {
-        insertString += " ON CONFLICT DO NOTHING";
+      if (event.t === "endTable") {
+        if (current && event.name !== current.rawName) {
+          throw new Error(
+            `Backup endTable event "${event.name}" does not match "${current.rawName}".`,
+          );
+        }
+        await finalizeTable(current);
+        current = null;
+        continue;
       }
-      for (const row of rows) {
+      if (event.t === "end") {
+        await finalizeTable(current);
+        current = null;
+        break;
+      }
+      if (event.t === "row") {
+        if (!current) {
+          throw new Error("Backup row event arrived without a table context.");
+        }
+        const state = current;
+        if (event.table !== state.rawName) {
+          throw new Error(
+            `Backup row event "${event.table}" does not match "${state.rawName}".`,
+          );
+        }
+        const row = event.row ?? {};
+        for (const key of Object.keys(row)) {
+          if (state.columnTypes.has(key)) continue;
+          const value = (row as any)[key];
+          if (value === null || value === undefined) {
+            state.pendingColumns.add(key);
+            continue;
+          }
+          if (state.pendingColumns.has(key)) {
+            state.pendingColumns.delete(key);
+          }
+          const type = this._inferBackupPgTypeFromValue(value);
+          if (!state.created) {
+            state.columnTypes.set(key, type);
+          } else {
+            await addColumn(state, key, type);
+          }
+        }
+
+        if (!state.created) {
+          await createTable(state);
+        }
+
+        const columns = Object.keys(row).filter((key) =>
+          state.columnTypes.has(key),
+        );
+        if (columns.length === 0) {
+          continue;
+        }
+        const columnList = columns
+          .map((key) => this._quoteIdent(key))
+          .join(", ");
+        const placeholders = columns.map((_, idx) => `$${idx + 1}`).join(", ");
+        let insertString = `INSERT INTO ${state.safeName} (${columnList}) VALUES (${placeholders})`;
+        if (mode === "merge") {
+          insertString += " ON CONFLICT DO NOTHING";
+        }
         const values = columns.map((key) =>
           this._encodePgValue((row as any)[key]),
         );
@@ -228,6 +360,26 @@ export class PgLayer implements SourceLayer {
       this._tableInfoCache.clear();
     }
     this._columnKindsCache.clear();
+  }
+
+  private async *_iterateBackupRows(
+    safeName: string,
+    orderBy?: string,
+  ): AsyncGenerator<Record<string, unknown>> {
+    const chunkSize = 1000;
+    let offset = 0;
+    const orderClause = orderBy ? ` ORDER BY ${orderBy}` : "";
+    while (true) {
+      const rows = await this._unsafe<Record<string, unknown>[]>(
+        `SELECT * FROM ${safeName}${orderClause} LIMIT ${chunkSize} OFFSET ${offset}`,
+      );
+      if (!rows || rows.length === 0) break;
+      for (const row of rows) {
+        yield row;
+      }
+      if (rows.length < chunkSize) break;
+      offset += rows.length;
+    }
   }
 
   /** @internal */
@@ -514,29 +666,22 @@ export class PgLayer implements SourceLayer {
     }
   }
 
-  private _inferBackupPgType(
-    rows: Record<string, unknown>[],
-    key: string,
-  ): string {
-    for (const row of rows) {
-      const value = (row as any)[key];
-      if (value === null || value === undefined) continue;
-      if (typeof value === "string") {
-        try {
-          const parsed = JSON.parse(value);
-          if (parsed && typeof parsed === "object") {
-            if (this._isEncryptedPayload(parsed)) {
-              return this._domainsAvailable ? PG_ENCRYPTED_DOMAIN : "JSONB";
-            }
-            return "JSONB";
+  private _inferBackupPgTypeFromValue(value: unknown): string {
+    if (value === null || value === undefined) return "TEXT";
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === "object") {
+          if (this._isEncryptedPayload(parsed)) {
+            return this._domainsAvailable ? PG_ENCRYPTED_DOMAIN : "JSONB";
           }
-        } catch {
-          // fall through
+          return "JSONB";
         }
+      } catch {
+        // fall through
       }
-      return this._inferPgTypeFromValue(value);
     }
-    return "TEXT";
+    return this._inferPgTypeFromValue(value);
   }
 
   private _encodePgValue(v: any): any {

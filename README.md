@@ -18,7 +18,7 @@ korm is a Unified Data Runtime for Bun that treats SQL databases, references, an
 
 - Multi-layer data model: SQLite, Postgres, and MySQL in a single pool.
 - Resource Names (RNs) for stable, portable references across layers and depots.
-- Type-safe resolution (`resolvePaths`) that turns RN fields into actual objects.
+- Type-safe resolution via `korm.resolve(...)` that turns RN fields into actual objects.
 - Built-in encryption and redaction for sensitive fields.
 - Depot files (local or S3-compatible) that persist alongside items.
 - Optional undo/redo WAL for crash safety across `create`, `commit`, `delete`, and `tx` (and optionally depot file writes).
@@ -32,7 +32,7 @@ korm is a Unified Data Runtime for Bun that treats SQL databases, references, an
 These run in GitHub Actions on `main` and publish both a run summary and a structured test report.
 
 - **Unit**: fast checks over individual modules in `src/**/*.unit.test.ts` (core APIs, types, helpers).
-- **Integration**: full multi-layer behavior across SQLite/Postgres/MySQL/depots, WAL, backups, resolvePaths, encryption (`src/testing/integration.test.ts`).
+- **Integration**: full multi-layer behavior across SQLite/Postgres/MySQL/depots, WAL, backups, resolution, encryption (`src/testing/integration.test.ts`).
 - **Hostile**: adversarial probes against injection, unsafe identifiers, RN/path traversal, WAL tampering (`src/testing/hostile.test.ts`).
 
 ## Install
@@ -51,7 +51,7 @@ korm is built for Bun. The examples in `examples/` assume Bun runtime.
 ## Quick Start
 
 ```ts
-import { korm, type RN, type Encrypt, type Password } from "@fkws/korm";
+import { korm } from "@fkws/korm";
 
 // Layers
 const carDb = korm.layers.sqlite("./cars.sqlite");
@@ -87,7 +87,7 @@ const pool = korm.pool()
 type User = {
   firstName: string;
   lastName: string;
-  password: Password<string>;
+  password: korm.types.Password<string>;
   username: string;
 };
 
@@ -95,9 +95,9 @@ type Car = {
   make: string;
   model: string;
   year: number;
-  owner: RN<User>; // RN reference
+  owner: korm.types.RN<User>; // RN reference
   registered: boolean;
-  registrationNumber: Encrypt<string>; // mark sensitive data for encryption
+  registrationNumber: korm.types.Encrypt<string>; // mark sensitive data for encryption
 };
 
 // Create items
@@ -131,7 +131,7 @@ const car = (await korm.item<Car>(pool).from.data({
 const cars = (await korm.item<Car>(pool)
   .from.query(korm.rn("[rn][from::cardb]:cars:suv:*"))
   .where(korm.qfns.eq("owner.username", "freddie"))
-  .get({ resolvePaths: ["owner"] })
+  .get(korm.resolve("owner"))
 ).unwrap();
 
 console.log(cars[0]?.data?.owner.firstName); // fully typed
@@ -161,6 +161,16 @@ type JSONable =
   | JSONable[]
   | { [k: string]: JSONable }
   | { toJSON(): JSONable };
+```
+
+Reference the type when defining your models:
+
+```ts
+import { korm } from "@fkws/korm";
+
+type MyModel = {
+  payload: korm.types.JSONable;
+};
 ```
 
 ### Resource Names (RN)
@@ -263,14 +273,14 @@ Use dot notation and bracket indexes:
 .where(eq("owner.addresses[*].city", "Bedrock"))
 ```
 
-### resolvePaths (typed joins)
+### Resolution (typed joins)
 
-`resolvePaths` turns RN fields into their referenced objects and updates the TypeScript type accordingly.
+Use `korm.resolve(...)` to turn RN fields into their referenced objects and update the TypeScript type accordingly.
 
 ```ts
 const cars = (await korm.item<Car>(pool)
   .from.query(korm.rn("[rn][from::cardb]:cars:suv:*"))
-  .get({ resolvePaths: ["owner", "owner.addresses[*].city"] })
+  .get(korm.resolve("owner", "owner.addresses[*].city"))
 ).unwrap();
 
 cars[0]?.data?.owner.firstName; // owner is typed as User
@@ -283,7 +293,7 @@ Supported patterns:
 - `owner.*.*` (resolve two levels deep)
 - `owner.addresses[*].city` (resolve all array entries)
 
-If you don't pass `resolvePaths` but query a nested RN path (e.g. `owner.username`), korm will automatically resolve just enough to filter safely. It groups RN lookups by layer to keep the number of DB round trips small.
+If you don't call `korm.resolve(...)` but query a nested RN path (e.g. `owner.username`), korm will automatically resolve just enough to filter safely. It groups RN lookups by layer to keep the number of DB round trips small.
 
 ### References and cascading updates
 
@@ -339,6 +349,22 @@ const invoiceFile = korm.file({
 await invoiceFile.create(pool); // upload without any DB op
 ```
 
+You can also stream uploads to avoid buffering large files in memory:
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue(new TextEncoder().encode("chunk"));
+    controller.close();
+  }
+});
+
+const largeFile = korm.file({
+  rn: korm.rn("[rn][depot::invoiceDepot]:invoices:fred:invoice-002.txt"),
+  file: stream
+});
+```
+
 State machine:
 
 - `FloatingDepotFile.create(pool)` -> `DepotFile` (committed)
@@ -350,7 +376,7 @@ When a `DepotFileLike` is present in item data, korm uploads it automatically an
 
 ### DepotFile RN resolution
 
-If you resolve a depot RN field via `resolvePaths`, you'll get a `DepotFile` object instead of an RN string, so you can call `text()`, `arrayBuffer()`, or `stream()`.
+If you resolve a depot RN field via `korm.resolve(...)`, you'll get a `DepotFile` object instead of an RN string, so you can call `text()`, `arrayBuffer()`, or `stream()`.
 
 ## Encryption
 
@@ -406,7 +432,7 @@ await korm.tx(item).persist({ destructive: true });
 
 ## Item-level locking
 
-korm serializes operations on the same RN within a single process. `create`, `commit`, `delete`, and `tx.persist` acquire locks automatically, and updates that cascade through `resolvePaths` lock all touched RNs in a stable order to avoid deadlocks.
+korm serializes operations on the same RN within a single process. `create`, `commit`, `delete`, and `tx.persist` acquire locks automatically, and updates that cascade through resolved references lock all touched RNs in a stable order to avoid deadlocks.
 
 If you need your own critical section, use the pool locker:
 
@@ -500,7 +526,7 @@ Backups are scheduled full snapshots per layer, written to a depot. Each snapsho
 
 Backups require pool metadata (`withMeta(...)`) because schedules and ownership are stored in `__korm_backups__` on the meta layer. When multiple korm instances share a pool, they coordinate by locking schedule entries so only one instance runs a given backup. Each instance also keeps in-memory timers so backups fire on time.
 
-Backups are stored as JSON files under the depot RN prefix `__korm_backups__:{layer}:{timestamp}:backup-<uuid>.json`. Encrypted fields stay encrypted in the payload.
+Backups are stored as streaming NDJSON files under the depot RN prefix `__korm_backups__:{layer}:{timestamp}:backup-<uuid>.ndjson`. Each line is a JSON event, which keeps backups memory-safe for large tables. Encrypted fields stay encrypted in the payload.
 
 ### Configure schedules and retention
 
@@ -538,7 +564,7 @@ const pool = korm.pool()
 
 pool.configureBackups("backups", manager);
 await manager.play(
-  korm.rn("[rn][depot::backups]:__korm_backups__:cardb:20240102T030405Z:backup-...json"),
+  korm.rn("[rn][depot::backups]:__korm_backups__:cardb:20240102T030405Z:backup-...ndjson"),
   { mode: "replace" }
 );
 ```
@@ -585,11 +611,14 @@ The Docker definitions live in `src/testing/docker-compose.yml` if you want to a
 
 ### korm
 
-- `korm.item<T>(pool)` -> `UninitializedItem<T>`
-- `korm.rn(str)` -> `RN<T>`
+Types referenced below live under `korm.types` (for example, `korm.types.RN`).
+
+- `korm.item<T>(pool)` -> `korm.types.UninitializedItem<T>`
+- `korm.rn(str)` -> `korm.types.RN<T>`
 - `korm.file({ rn, file })` -> `FloatingDepotFile`
 - `korm.layers.sqlite(path)` / `pg(...)` / `mysql(...)`
 - `korm.qfns` -> `{ eq, and, or, not, gt, gte, lt, lte, like, inList }`
+- `korm.resolve(...paths)` -> resolve options helper for query and `from.rn(...)`
 - `korm.encrypt(value)` / `korm.password(value)`
 - `korm.tx(...items)` -> Tx builder
 - `korm.pool()` -> Pool builder (`setLayers`, `setDepots`, `withMeta`, `withLocks`, `withWal`, `backups`, `open`)
@@ -599,7 +628,7 @@ The Docker definitions live in `src/testing/docker-compose.yml` if you want to a
 - `korm.discover(layer)` -> Discover a pool from metadata stored in a layer
 - `korm.reset(pool, { mode })` -> `BaseNeedsDanger<Promise<void>>` for dropping korm-managed data (`mode`: `"all" | "layers" | "depots" | "meta" | "meta only"`)
 - `korm.danger(op)` -> execute a `BaseNeedsDanger` wrapper
-- `korm.pool(...entries, options?)` -> `LayerPool` (legacy)
+- `korm.pool(...entries, options?)` -> `korm.types.LayerPool` (legacy)
 
 ### Danger helpers
 
@@ -632,8 +661,8 @@ The Docker definitions live in `src/testing/docker-compose.yml` if you want to a
 
 ### Query
 
-- `from.query(rn).where(component).get({ resolvePaths, allowMissing })`
-- `from.rn(rn, { resolvePaths, allowMissing })`
+- `from.query(rn).where(component).get({ ...korm.resolve(...paths), allowMissing })`
+- `from.rn(rn, { ...korm.resolve(...paths), allowMissing })`
 
 ### Depots
 
@@ -686,7 +715,7 @@ Legacy `korm.pool(..., { walMode, lockMode, metaMode })` is still supported.
 - If your pool has more than one layer, always set the `from` mod.
 - Depot RN wildcards are only allowed as the last segment.
 - Queries on nested RN properties may resolve and filter in memory when needed.
-- `resolvePaths` can be mixed with wildcards and array indices.
+- Resolved paths can be mixed with wildcards and array indices.
 - WAL uses before-images to undo and retry incomplete writes; set `depotOps: "record"` to cover depot file writes. Other external side effects are not rolled back.
 
 ## License

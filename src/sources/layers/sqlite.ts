@@ -24,12 +24,13 @@ import type { ColumnKind } from "../../core/columnKind";
 import type { RN } from "../../core/rn";
 import { safeAssign } from "../../core/safeObject";
 import {
-  buildBackupPayload,
+  BACKUP_EXTENSION,
+  buildBackupHeaderEvent,
   buildBackupRn,
-  serializeBackupPayload,
+  streamBackupEvents,
   type BackupContext,
-  type BackupPayload,
   type BackupRestoreOptions,
+  type BackupRestorePayload,
 } from "../backups";
 
 const SQLITE_JSON_TYPE = "JSON_TEXT";
@@ -72,140 +73,269 @@ export class SqliteLayer implements SourceLayer {
              AND (name LIKE '__items__%' OR name = '__korm_meta__' OR name = '__korm_pool__')`,
       )
       .all() as Array<{ name: string }>;
-    const dumps = tables.map((row) => {
-      const safeName = this._quoteIdent(row.name);
-      const rows = this._db
-        .prepare(`SELECT * FROM ${safeName}`)
-        .all() as Record<string, unknown>[];
-      return { name: row.name, rows };
-    });
-    const payload = buildBackupPayload(
-      "sqlite",
-      context.layerIdent,
-      dumps,
-      now,
-    );
     const rn = buildBackupRn(
       context.depotIdent,
       context.layerIdent,
       now,
-      "json",
+      BACKUP_EXTENSION,
     );
-    const file = new FloatingDepotFile(rn, serializeBackupPayload(payload));
+    const events = async function* (
+      self: SqliteLayer,
+    ): AsyncGenerator<
+      | ReturnType<typeof buildBackupHeaderEvent>
+      | { t: "table"; name: string }
+      | { t: "row"; table: string; row: Record<string, unknown> }
+      | { t: "endTable"; name: string }
+      | { t: "end" }
+    > {
+      yield buildBackupHeaderEvent("sqlite", context.layerIdent, now);
+      for (const table of tables) {
+        yield { t: "table", name: table.name };
+        const safeName = self._quoteIdent(table.name);
+        const stmt = self._db.prepare(`SELECT * FROM ${safeName}`);
+        for (const row of stmt.iterate()) {
+          yield {
+            t: "row",
+            table: table.name,
+            row: row as Record<string, unknown>,
+          };
+        }
+        yield { t: "endTable", name: table.name };
+      }
+      yield { t: "end" };
+    };
+    const stream = streamBackupEvents(events(this));
+    const file = new FloatingDepotFile(rn, stream);
     await context.depot.createFile(file);
   }
 
   /** @internal */
   async restore(
-    payload: BackupPayload,
+    payload: BackupRestorePayload,
     options?: BackupRestoreOptions,
   ): Promise<void> {
-    if (payload.layerType !== "sqlite") {
+    if (payload.header.layerType !== "sqlite") {
       throw new Error(
-        `Backup payload layer type "${payload.layerType}" does not match sqlite.`,
+        `Backup payload layer type "${payload.header.layerType}" does not match sqlite.`,
       );
     }
     const mode = options?.mode ?? "replace";
     const poolTable = "__korm_pool__";
     const metaTable = "__korm_meta__";
+    let schemaChanged = false;
 
-    for (const table of payload.tables) {
-      const rawName = table.name;
-      const safeName = this._quoteIdent(rawName);
-      const rows = table.rows ?? [];
+    type TableState = {
+      rawName: string;
+      safeName: string;
+      created: boolean;
+      columnTypes: Map<string, string>;
+      pendingColumns: Set<string>;
+      isItems: boolean;
+    };
 
-      if (rawName === poolTable) {
-        this._db.run(
-          `CREATE TABLE IF NOT EXISTS "${poolTable}" (
-                        "id" TEXT PRIMARY KEY,
-                        "config" TEXT NOT NULL,
-                        "created_at" INTEGER NOT NULL,
-                        "updated_at" INTEGER NOT NULL
-                    )`,
-        );
-      } else if (rawName === metaTable) {
-        this._db.run(
-          `CREATE TABLE IF NOT EXISTS "${metaTable}" (
-                        "table_name" TEXT NOT NULL,
-                        "column_name" TEXT NOT NULL,
-                        "kind" TEXT NOT NULL,
-                        PRIMARY KEY ("table_name", "column_name")
-                    )`,
-        );
-      } else if (this._getTableInfo(rawName).length === 0) {
-        const columns = new Set<string>();
-        for (const row of rows) {
-          for (const key of Object.keys(row)) {
-            columns.add(key);
+    const ensurePoolTable = (state?: TableState): void => {
+      this._db.run(
+        `CREATE TABLE IF NOT EXISTS "${poolTable}" (
+                    "id" TEXT PRIMARY KEY,
+                    "config" TEXT NOT NULL,
+                    "created_at" INTEGER NOT NULL,
+                    "updated_at" INTEGER NOT NULL
+                )`,
+      );
+      schemaChanged = true;
+      if (state) {
+        state.created = true;
+        state.columnTypes.set("id", "TEXT");
+        state.columnTypes.set("config", "TEXT");
+        state.columnTypes.set("created_at", "INTEGER");
+        state.columnTypes.set("updated_at", "INTEGER");
+      }
+    };
+
+    const ensureMetaTable = (state?: TableState): void => {
+      this._db.run(
+        `CREATE TABLE IF NOT EXISTS "${metaTable}" (
+                    "table_name" TEXT NOT NULL,
+                    "column_name" TEXT NOT NULL,
+                    "kind" TEXT NOT NULL,
+                    PRIMARY KEY ("table_name", "column_name")
+                )`,
+      );
+      schemaChanged = true;
+      if (state) {
+        state.created = true;
+        state.columnTypes.set("table_name", "TEXT");
+        state.columnTypes.set("column_name", "TEXT");
+        state.columnTypes.set("kind", "TEXT");
+      }
+    };
+
+    const createTable = (state: TableState): void => {
+      if (state.created) return;
+      if (state.columnTypes.size === 0 && state.pendingColumns.size > 0) {
+        for (const key of state.pendingColumns) {
+          if (!state.columnTypes.has(key)) {
+            state.columnTypes.set(key, "TEXT");
           }
         }
-        if (rawName.startsWith("__items__") && !columns.has("rnId")) {
-          columns.add("rnId");
-        }
-        const columnDefs: string[] = [];
-        for (const key of columns) {
-          const type = this._inferBackupSqliteType(rows, key);
-          const columnName = this._quoteIdent(key);
-          if (rawName.startsWith("__items__") && key === "rnId") {
-            columnDefs.push(`${columnName} TEXT PRIMARY KEY`);
-          } else {
-            columnDefs.push(`${columnName} ${type}`);
-          }
-        }
-        if (columnDefs.length > 0) {
-          this._db.run(
-            `CREATE TABLE IF NOT EXISTS ${safeName} (${columnDefs.join(", ")})`,
-          );
-        }
+        state.pendingColumns.clear();
       }
-
-      const tableInfo = this._getTableInfo(rawName, { force: true });
-      if (tableInfo.length === 0) {
-        continue;
-      }
-      const existing = new Set(tableInfo.map((col) => col.name));
-      const missing = new Set<string>();
-      for (const row of rows) {
-        for (const key of Object.keys(row)) {
-          if (!existing.has(key)) {
-            missing.add(key);
-          }
-        }
-      }
-      if (rawName.startsWith("__items__") && !existing.has("rnId")) {
-        missing.add("rnId");
-      }
-      for (const key of missing) {
-        const type = this._inferBackupSqliteType(rows, key);
+      if (state.columnTypes.size === 0) return;
+      const columnDefs: string[] = [];
+      for (const [key, type] of state.columnTypes) {
         const columnName = this._quoteIdent(key);
+        if (state.isItems && key === "rnId") {
+          columnDefs.push(`${columnName} TEXT PRIMARY KEY`);
+        } else {
+          columnDefs.push(`${columnName} ${type}`);
+        }
+      }
+      if (columnDefs.length === 0) return;
+      this._db.run(
+        `CREATE TABLE IF NOT EXISTS ${state.safeName} (${columnDefs.join(", ")})`,
+      );
+      state.created = true;
+      schemaChanged = true;
+    };
+
+    const addColumn = (state: TableState, key: string, type: string): void => {
+      if (state.columnTypes.has(key)) return;
+      const columnName = this._quoteIdent(key);
+      if (state.created) {
         this._db.run(
-          `ALTER TABLE ${safeName} ADD COLUMN ${columnName} ${type}`,
+          `ALTER TABLE ${state.safeName} ADD COLUMN ${columnName} ${type}`,
         );
+        schemaChanged = true;
+      }
+      state.columnTypes.set(key, type);
+    };
+
+    const ensureRnId = (state: TableState): void => {
+      if (!state.isItems || state.columnTypes.has("rnId")) return;
+      addColumn(state, "rnId", "TEXT");
+    };
+
+    const initTableState = (rawName: string): TableState => {
+      const safeName = this._quoteIdent(rawName);
+      const tableInfo = this._getTableInfo(rawName, { force: true });
+      const columnTypes = new Map<string, string>(
+        tableInfo.map((col) => [col.name, (col.type || "TEXT").toUpperCase()]),
+      );
+      const state: TableState = {
+        rawName,
+        safeName,
+        created: tableInfo.length > 0,
+        columnTypes,
+        pendingColumns: new Set<string>(),
+        isItems: rawName.startsWith("__items__"),
+      };
+
+      if (rawName === poolTable && !state.created) {
+        ensurePoolTable(state);
+      } else if (rawName === metaTable && !state.created) {
+        ensureMetaTable(state);
       }
 
-      if (mode === "replace") {
+      ensureRnId(state);
+
+      if (mode === "replace" && state.created) {
         this._db.run(`DELETE FROM ${safeName}`);
       }
-      if (rows.length === 0) {
-        continue;
-      }
-      const columnSet = new Set<string>();
-      for (const row of rows) {
-        for (const key of Object.keys(row)) {
-          columnSet.add(key);
+
+      return state;
+    };
+
+    const finalizeTable = (state: TableState | null): void => {
+      if (!state) return;
+      if (!state.created) {
+        if (state.isItems && !state.columnTypes.has("rnId")) {
+          state.columnTypes.set("rnId", "TEXT");
         }
+        createTable(state);
       }
-      if (columnSet.size === 0) {
+      if (state.pendingColumns.size > 0) {
+        for (const key of state.pendingColumns) {
+          addColumn(state, key, "TEXT");
+        }
+        state.pendingColumns.clear();
+      }
+    };
+
+    let current: TableState | null = null;
+
+    while (true) {
+      const event = await payload.reader.next();
+      if (!event) break;
+      if (event.t === "header") {
+        throw new Error("Unexpected backup header event during restore.");
+      }
+      if (event.t === "table") {
+        finalizeTable(current);
+        current = initTableState(event.name);
         continue;
       }
-      const columns = Array.from(columnSet);
-      const columnList = columns.map((key) => this._quoteIdent(key)).join(", ");
-      const placeholders = columns.map(() => "?").join(", ");
-      const insertVerb = mode === "merge" ? "INSERT OR IGNORE" : "INSERT";
-      const stmt = this._db.prepare(
-        `${insertVerb} INTO ${safeName} (${columnList}) VALUES (${placeholders})`,
-      );
-      for (const row of rows) {
+      if (event.t === "endTable") {
+        if (current && event.name !== current.rawName) {
+          throw new Error(
+            `Backup endTable event "${event.name}" does not match "${current.rawName}".`,
+          );
+        }
+        finalizeTable(current);
+        current = null;
+        continue;
+      }
+      if (event.t === "end") {
+        finalizeTable(current);
+        current = null;
+        break;
+      }
+      if (event.t === "row") {
+        if (!current) {
+          throw new Error("Backup row event arrived without a table context.");
+        }
+        const state = current;
+        if (event.table !== state.rawName) {
+          throw new Error(
+            `Backup row event "${event.table}" does not match "${state.rawName}".`,
+          );
+        }
+        const row = event.row ?? {};
+        for (const key of Object.keys(row)) {
+          if (state.columnTypes.has(key)) continue;
+          const value = (row as any)[key];
+          if (value === null || value === undefined) {
+            state.pendingColumns.add(key);
+            continue;
+          }
+          if (state.pendingColumns.has(key)) {
+            state.pendingColumns.delete(key);
+          }
+          const type = this._inferBackupSqliteTypeFromValue(value);
+          if (!state.created) {
+            state.columnTypes.set(key, type);
+          } else {
+            addColumn(state, key, type);
+          }
+        }
+
+        if (!state.created) {
+          createTable(state);
+        }
+
+        const columns = Object.keys(row).filter((key) =>
+          state.columnTypes.has(key),
+        );
+        if (columns.length === 0) {
+          continue;
+        }
+        const columnList = columns
+          .map((key) => this._quoteIdent(key))
+          .join(", ");
+        const placeholders = columns.map(() => "?").join(", ");
+        const insertVerb = mode === "merge" ? "INSERT OR IGNORE" : "INSERT";
+        const stmt = this._db.prepare(
+          `${insertVerb} INTO ${state.safeName} (${columnList}) VALUES (${placeholders})`,
+        );
         const values = columns.map((key) =>
           this._encodeSqlValue((row as any)[key]),
         );
@@ -213,8 +343,10 @@ export class SqliteLayer implements SourceLayer {
       }
     }
 
-    this._tableInfoCache.clear();
-    this._columnKindsCache.clear();
+    if (schemaChanged) {
+      this._tableInfoCache.clear();
+      this._columnKindsCache.clear();
+    }
   }
 
   /** @internal */
@@ -374,27 +506,20 @@ export class SqliteLayer implements SourceLayer {
     }
   }
 
-  private _inferBackupSqliteType(
-    rows: Record<string, unknown>[],
-    key: string,
-  ): string {
-    for (const row of rows) {
-      const value = (row as any)[key];
-      if (value === null || value === undefined) continue;
-      if (typeof value === "string") {
-        try {
-          const parsed = JSON.parse(value);
-          if (parsed && typeof parsed === "object") {
-            if (this._isEncryptedPayload(parsed)) return SQLITE_ENCRYPTED_TYPE;
-            return SQLITE_JSON_TYPE;
-          }
-        } catch {
-          // fall through
+  private _inferBackupSqliteTypeFromValue(value: unknown): string {
+    if (value === null || value === undefined) return "TEXT";
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === "object") {
+          if (this._isEncryptedPayload(parsed)) return SQLITE_ENCRYPTED_TYPE;
+          return SQLITE_JSON_TYPE;
         }
+      } catch {
+        // fall through
       }
-      return this._inferSqliteTypeFromValue(value);
     }
-    return "TEXT";
+    return this._inferSqliteTypeFromValue(value);
   }
 
   private _encodeSqlValue(v: any): any {

@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { korm, type RN } from "..";
+import { korm } from "..";
 
 // Single-layer pool: no WAL, backups, depots, or federation needed.
 const sqlitePath = resolve(import.meta.dir, "../src/testing/test.sqlite");
@@ -13,7 +13,7 @@ type User = {
 type Car = {
   make: string;
   model: string;
-  owner: RN<User>;
+  owner: korm.types.RN<User>;
 };
 
 const user = (

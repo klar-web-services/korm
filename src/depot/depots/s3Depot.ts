@@ -4,6 +4,15 @@ import { RN } from "../../core/rn";
 import { createDepotIdentifier } from "../depotIdent";
 import crypto from "node:crypto";
 
+function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    "getReader" in value &&
+    typeof (value as ReadableStream).getReader === "function"
+  );
+}
+
 /**
  * Options for S3-compatible depots.
  */
@@ -320,7 +329,10 @@ export class S3Depot implements Depot {
     }
     await this._ensureBucket();
     const key = this._keyFor(file.rn);
-    await this._client.write(key, file.file);
+    const payload = isReadableStream(file.file)
+      ? new Response(file.file)
+      : (file.file as Blob);
+    await this._client.write(key, payload);
     return key;
   }
 
@@ -400,7 +412,10 @@ export class S3Depot implements Depot {
     const file = await this.getFile(rn);
     const updated = await edit(file);
     const key = this._keyFor(rn);
-    await this._client.write(key, updated.file);
+    const payload = isReadableStream(updated.file)
+      ? new Response(updated.file)
+      : (updated.file as Blob);
+    await this._client.write(key, payload);
     return true;
   }
 

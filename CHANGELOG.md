@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0
+
+Moves public type exports under `korm.types`, removing root-level type exports, adds streaming depot uploads, and streams backups to NDJSON.
+
+**Core API**
+- Exposed public types via `korm.types` and removed root type exports.
+- Added readable stream support for depot uploads.
+- Streamed backups as NDJSON to avoid loading full tables into memory during backup/restore.
+
+**Docs**
+- Updated README and examples to reference `korm.types` for public types.
+- Documented streaming depot uploads in `README.md`.
+
 ## 1.1.2
 
 Avoids eager argon2 native loads by preferring Bun's password hashing, lazy-loads the argon2 fallback for non-Bun runtimes, and declares supported engines for native compatibility.

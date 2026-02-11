@@ -30,12 +30,13 @@ import crypto from "node:crypto";
 import type { RN } from "../../core/rn";
 import { safeAssign } from "../../core/safeObject";
 import {
-  buildBackupPayload,
+  BACKUP_EXTENSION,
+  buildBackupHeaderEvent,
   buildBackupRn,
-  serializeBackupPayload,
+  streamBackupEvents,
   type BackupContext,
-  type BackupPayload,
   type BackupRestoreOptions,
+  type BackupRestorePayload,
 } from "../backups";
 
 const MYSQL_META_TABLE = "__korm_meta__";
@@ -85,161 +86,322 @@ export class MysqlLayer implements SourceLayer {
              WHERE table_schema = DATABASE()
              AND (table_name LIKE '__items__%' OR table_name = '__korm_meta__' OR table_name = '__korm_pool__')`,
     )) as [Array<{ table_name: string }>, unknown];
-    const dumps: Array<{ name: string; rows: Record<string, unknown>[] }> = [];
-    for (const row of tables) {
-      const tableName =
-        (row as { table_name?: string; TABLE_NAME?: string; name?: string })
-          .table_name ??
-        (row as { TABLE_NAME?: string }).TABLE_NAME ??
-        (row as { name?: string }).name;
-      if (!tableName) continue;
-      const safeName = this._quoteIdent(tableName);
-      const [rows] = (await this._pool.query(`SELECT * FROM ${safeName}`)) as [
-        RowDataPacket[],
-        unknown,
-      ];
-      dumps.push({ name: tableName, rows: rows as Record<string, unknown>[] });
-    }
-    const payload = buildBackupPayload("mysql", context.layerIdent, dumps, now);
     const rn = buildBackupRn(
       context.depotIdent,
       context.layerIdent,
       now,
-      "json",
+      BACKUP_EXTENSION,
     );
-    const file = new FloatingDepotFile(rn, serializeBackupPayload(payload));
+    const events = async function* (
+      self: MysqlLayer,
+    ): AsyncGenerator<
+      | ReturnType<typeof buildBackupHeaderEvent>
+      | { t: "table"; name: string }
+      | { t: "row"; table: string; row: Record<string, unknown> }
+      | { t: "endTable"; name: string }
+      | { t: "end" }
+    > {
+      yield buildBackupHeaderEvent("mysql", context.layerIdent, now);
+      for (const row of tables) {
+        const tableName =
+          (row as { table_name?: string; TABLE_NAME?: string; name?: string })
+            .table_name ??
+          (row as { TABLE_NAME?: string }).TABLE_NAME ??
+          (row as { name?: string }).name;
+        if (!tableName) continue;
+        const safeName = self._quoteIdent(tableName);
+        const orderBy = tableName.startsWith("__items__")
+          ? self._quoteIdent("rnId")
+          : undefined;
+        yield { t: "table", name: tableName };
+        for await (const item of self._iterateBackupRows(safeName, orderBy)) {
+          yield {
+            t: "row",
+            table: tableName,
+            row: item,
+          };
+        }
+        yield { t: "endTable", name: tableName };
+      }
+      yield { t: "end" };
+    };
+    const stream = streamBackupEvents(events(this));
+    const file = new FloatingDepotFile(rn, stream);
     await context.depot.createFile(file);
   }
 
   /** @internal */
   async restore(
-    payload: BackupPayload,
+    payload: BackupRestorePayload,
     options?: BackupRestoreOptions,
   ): Promise<void> {
-    if (payload.layerType !== "mysql") {
+    if (payload.header.layerType !== "mysql") {
       throw new Error(
-        `Backup payload layer type "${payload.layerType}" does not match mysql.`,
+        `Backup payload layer type "${payload.header.layerType}" does not match mysql.`,
       );
     }
     const mode = options?.mode ?? "replace";
     const poolTable = "__korm_pool__";
     const metaTable = MYSQL_META_TABLE;
     let schemaChanged = false;
+    type TableState = {
+      rawName: string;
+      actualName: string;
+      safeName: string;
+      created: boolean;
+      columnTypes: Map<string, string>;
+      pendingColumns: Set<string>;
+      isItems: boolean;
+    };
 
-    for (const table of payload.tables) {
-      const rawName = table.name;
-      const actualName = this._resolveTableName(rawName);
-      const safeName = this._quoteIdent(actualName);
-      const rows = table.rows ?? [];
+    const ensurePoolTable = async (state?: TableState): Promise<void> => {
+      await this._pool.query(
+        `CREATE TABLE IF NOT EXISTS \`${poolTable}\` (
+                    \`id\` VARCHAR(64) PRIMARY KEY,
+                    \`config\` JSON NOT NULL,
+                    \`created_at\` BIGINT NOT NULL,
+                    \`updated_at\` BIGINT NOT NULL
+                )`,
+      );
+      schemaChanged = true;
+      if (state) {
+        state.created = true;
+        state.columnTypes.set("id", "TEXT");
+        state.columnTypes.set("config", "JSON");
+        state.columnTypes.set("created_at", "INTEGER");
+        state.columnTypes.set("updated_at", "INTEGER");
+      }
+    };
 
-      if (rawName === poolTable) {
-        await this._pool.query(
-          `CREATE TABLE IF NOT EXISTS \`${poolTable}\` (
-                        \`id\` VARCHAR(64) PRIMARY KEY,
-                        \`config\` JSON NOT NULL,
-                        \`created_at\` BIGINT NOT NULL,
-                        \`updated_at\` BIGINT NOT NULL
-                    )`,
-        );
-        schemaChanged = true;
-      } else if (rawName === metaTable) {
-        await this._ensureMetaTable();
-      } else if ((await this._getTableInfo(rawName)).length === 0) {
-        const columns = new Set<string>();
-        for (const row of rows) {
-          for (const key of Object.keys(row)) {
-            columns.add(key);
+    const ensureMetaTable = async (state?: TableState): Promise<void> => {
+      await this._ensureMetaTable();
+      schemaChanged = true;
+      if (state) {
+        state.created = true;
+        state.columnTypes.set("table_name", "TEXT");
+        state.columnTypes.set("column_name", "TEXT");
+        state.columnTypes.set("kind", "TEXT");
+      }
+    };
+
+    const createTable = async (state: TableState): Promise<void> => {
+      if (state.created) return;
+      if (state.columnTypes.size === 0 && state.pendingColumns.size > 0) {
+        for (const key of state.pendingColumns) {
+          if (!state.columnTypes.has(key)) {
+            state.columnTypes.set(key, "TEXT");
           }
         }
-        if (rawName.startsWith("__items__") && !columns.has("rnId")) {
-          columns.add("rnId");
-        }
-        const columnDefs: string[] = [];
-        for (const key of columns) {
-          const columnName = this._quoteIdent(key);
-          if (rawName.startsWith("__items__") && key === "rnId") {
-            columnDefs.push(`${columnName} VARCHAR(255) PRIMARY KEY`);
-            continue;
-          }
-          const t = this._inferBackupMySqlType(rows, key);
-          if (t === "TEXT") columnDefs.push(`${columnName} TEXT`);
-          else if (t === "INTEGER") columnDefs.push(`${columnName} INT`);
-          else if (t === "DOUBLE") columnDefs.push(`${columnName} DOUBLE`);
-          else if (t === "BOOLEAN") columnDefs.push(`${columnName} TINYINT(1)`);
-          else if (t === "JSON") columnDefs.push(`${columnName} JSON`);
-        }
-        if (columnDefs.length > 0) {
-          await this._pool.query(
-            `CREATE TABLE IF NOT EXISTS ${safeName} ( ${columnDefs.join(", ")} )`,
-          );
-          schemaChanged = true;
-        }
+        state.pendingColumns.clear();
       }
-
-      const tableInfo = await this._getTableInfo(rawName, { force: true });
-      if (tableInfo.length === 0) {
-        continue;
-      }
-      const existing = new Set(tableInfo.map((col) => col.name));
-      const missing = new Set<string>();
-      for (const row of rows) {
-        for (const key of Object.keys(row)) {
-          if (!existing.has(key)) {
-            missing.add(key);
-          }
-        }
-      }
-      if (rawName.startsWith("__items__") && !existing.has("rnId")) {
-        missing.add("rnId");
-      }
-      for (const key of missing) {
+      if (state.columnTypes.size === 0) return;
+      const columnDefs: string[] = [];
+      for (const [key, type] of state.columnTypes) {
         const columnName = this._quoteIdent(key);
-        if (rawName.startsWith("__items__") && key === "rnId") {
+        if (state.isItems && key === "rnId") {
+          columnDefs.push(`${columnName} VARCHAR(255) PRIMARY KEY`);
+          continue;
+        }
+        if (type === "TEXT") columnDefs.push(`${columnName} TEXT`);
+        else if (type === "INTEGER") columnDefs.push(`${columnName} INT`);
+        else if (type === "DOUBLE") columnDefs.push(`${columnName} DOUBLE`);
+        else if (type === "BOOLEAN")
+          columnDefs.push(`${columnName} TINYINT(1)`);
+        else if (type === "JSON") columnDefs.push(`${columnName} JSON`);
+      }
+      if (columnDefs.length === 0) return;
+      await this._pool.query(
+        `CREATE TABLE IF NOT EXISTS ${state.safeName} ( ${columnDefs.join(", ")} )`,
+      );
+      state.created = true;
+      schemaChanged = true;
+    };
+
+    const addColumn = async (
+      state: TableState,
+      key: string,
+      type: string,
+    ): Promise<void> => {
+      if (state.columnTypes.has(key)) return;
+      const columnName = this._quoteIdent(key);
+      if (state.created) {
+        if (state.isItems && key === "rnId") {
           await this._pool.query(
-            `ALTER TABLE ${safeName} ADD COLUMN ${columnName} VARCHAR(255)`,
+            `ALTER TABLE ${state.safeName} ADD COLUMN ${columnName} VARCHAR(255)`,
           );
         } else {
-          const t = this._inferBackupMySqlType(rows, key);
-          const mapped = t === "BOOLEAN" ? "TINYINT(1)" : t;
+          const mapped = type === "BOOLEAN" ? "TINYINT(1)" : type;
           await this._pool.query(
-            `ALTER TABLE ${safeName} ADD COLUMN ${columnName} ${mapped}`,
+            `ALTER TABLE ${state.safeName} ADD COLUMN ${columnName} ${mapped}`,
           );
         }
         schemaChanged = true;
       }
+      state.columnTypes.set(key, type);
+    };
 
-      if (mode === "replace") {
+    const ensureRnId = async (state: TableState): Promise<void> => {
+      if (!state.isItems || state.columnTypes.has("rnId")) return;
+      await addColumn(state, "rnId", "TEXT");
+    };
+
+    const initTableState = async (rawName: string): Promise<TableState> => {
+      const actualName = this._resolveTableName(rawName);
+      const safeName = this._quoteIdent(actualName);
+      const tableInfo = await this._getTableInfo(rawName, { force: true });
+      const columnTypes = new Map<string, string>(
+        tableInfo.map((col) => [
+          col.name,
+          this._normalizeExistingType(col.type, col.column_type),
+        ]),
+      );
+      const state: TableState = {
+        rawName,
+        actualName,
+        safeName,
+        created: tableInfo.length > 0,
+        columnTypes,
+        pendingColumns: new Set<string>(),
+        isItems: rawName.startsWith("__items__"),
+      };
+
+      if (rawName === poolTable && !state.created) {
+        await ensurePoolTable(state);
+      } else if (rawName === metaTable && !state.created) {
+        await ensureMetaTable(state);
+      }
+
+      await ensureRnId(state);
+
+      if (mode === "replace" && state.created) {
         await this._pool.query(`DELETE FROM ${safeName}`);
       }
-      if (rows.length === 0) {
-        continue;
-      }
-      const columnSet = new Set<string>();
-      for (const row of rows) {
-        for (const key of Object.keys(row)) {
-          columnSet.add(key);
+
+      return state;
+    };
+
+    const finalizeTable = async (state: TableState | null): Promise<void> => {
+      if (!state) return;
+      if (!state.created) {
+        if (state.isItems && !state.columnTypes.has("rnId")) {
+          state.columnTypes.set("rnId", "TEXT");
         }
+        await createTable(state);
       }
-      if (columnSet.size === 0) {
+      if (state.pendingColumns.size > 0) {
+        for (const key of state.pendingColumns) {
+          await addColumn(state, key, "TEXT");
+        }
+        state.pendingColumns.clear();
+      }
+    };
+
+    let current: TableState | null = null;
+
+    while (true) {
+      const event = await payload.reader.next();
+      if (!event) break;
+      if (event.t === "header") {
+        throw new Error("Unexpected backup header event during restore.");
+      }
+      if (event.t === "table") {
+        await finalizeTable(current);
+        current = await initTableState(event.name);
         continue;
       }
-      const columns = Array.from(columnSet);
-      const columnList = columns.map((key) => this._quoteIdent(key)).join(", ");
-      const placeholders = columns.map(() => "?").join(", ");
-      const insertVerb = mode === "merge" ? "INSERT IGNORE" : "INSERT";
-      const insertString = `${insertVerb} INTO ${safeName} (${columnList}) VALUES (${placeholders})`;
-      for (const row of rows) {
+      if (event.t === "endTable") {
+        if (current && event.name !== current.rawName) {
+          throw new Error(
+            `Backup endTable event "${event.name}" does not match "${current.rawName}".`,
+          );
+        }
+        await finalizeTable(current);
+        current = null;
+        continue;
+      }
+      if (event.t === "end") {
+        await finalizeTable(current);
+        current = null;
+        break;
+      }
+      if (event.t === "row") {
+        if (!current) {
+          throw new Error("Backup row event arrived without a table context.");
+        }
+        const state = current;
+        if (event.table !== state.rawName) {
+          throw new Error(
+            `Backup row event "${event.table}" does not match "${state.rawName}".`,
+          );
+        }
+        const row = event.row ?? {};
+        for (const key of Object.keys(row)) {
+          if (state.columnTypes.has(key)) continue;
+          const value = (row as any)[key];
+          if (value === null || value === undefined) {
+            state.pendingColumns.add(key);
+            continue;
+          }
+          if (state.pendingColumns.has(key)) {
+            state.pendingColumns.delete(key);
+          }
+          const type = this._inferBackupMySqlTypeFromValue(value);
+          if (!state.created) {
+            state.columnTypes.set(key, type);
+          } else {
+            await addColumn(state, key, type);
+          }
+        }
+
+        if (!state.created) {
+          await createTable(state);
+        }
+
+        const columns = Object.keys(row).filter((key) =>
+          state.columnTypes.has(key),
+        );
+        if (columns.length === 0) {
+          continue;
+        }
+        const columnList = columns
+          .map((key) => this._quoteIdent(key))
+          .join(", ");
+        const placeholders = columns.map(() => "?").join(", ");
+        const insertVerb = mode === "merge" ? "INSERT IGNORE" : "INSERT";
         const values = columns.map((key) =>
           this._encodeMySqlValue((row as any)[key]),
         );
-        await this._pool.query(insertString, values);
+        await this._pool.query(
+          `${insertVerb} INTO ${state.safeName} (${columnList}) VALUES (${placeholders})`,
+          values,
+        );
       }
     }
 
     if (schemaChanged) {
       this._tableInfoCache.clear();
+      this._columnKindsCache.clear();
     }
-    this._columnKindsCache.clear();
+  }
+
+  private async *_iterateBackupRows(
+    safeName: string,
+    orderBy?: string,
+  ): AsyncGenerator<Record<string, unknown>> {
+    const chunkSize = 1000;
+    let offset = 0;
+    const orderClause = orderBy ? ` ORDER BY ${orderBy}` : "";
+    while (true) {
+      const [rows] = (await this._pool.query(
+        `SELECT * FROM ${safeName}${orderClause} LIMIT ${chunkSize} OFFSET ${offset}`,
+      )) as [RowDataPacket[], unknown];
+      if (!rows || rows.length === 0) break;
+      for (const row of rows as Record<string, unknown>[]) {
+        yield row;
+      }
+      if (rows.length < chunkSize) break;
+      offset += rows.length;
+    }
   }
 
   /** @internal */
@@ -431,26 +593,21 @@ export class MysqlLayer implements SourceLayer {
     }
   }
 
-  private _inferBackupMySqlType(
-    rows: Record<string, unknown>[],
-    key: string,
+  private _inferBackupMySqlTypeFromValue(
+    value: unknown,
   ): "TEXT" | "INTEGER" | "DOUBLE" | "BOOLEAN" | "JSON" {
-    for (const row of rows) {
-      const value = (row as any)[key];
-      if (value === null || value === undefined) continue;
-      if (typeof value === "string") {
-        try {
-          const parsed = JSON.parse(value);
-          if (parsed && typeof parsed === "object") {
-            return "JSON";
-          }
-        } catch {
-          // fall through
+    if (value === null || value === undefined) return "TEXT";
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === "object") {
+          return "JSON";
         }
+      } catch {
+        // fall through
       }
-      return this._inferMySqlTypeFromValue(value);
     }
-    return "TEXT";
+    return this._inferMySqlTypeFromValue(value);
   }
 
   private _encodeMySqlValue(v: any): any {
