@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.3.0
+
+Makes korm runtime-agnostic across Bun and Node.js by replacing Bun-only bindings with runtime adapters and Node-compatible build output.
+
+**Runtime**
+- Added runtime adapters for Postgres, SQLite, and S3 (`src/runtime/{pgClient,sqliteClient,s3Client}.ts`) with Bun/Node engine detection in `src/runtime/engine.ts`.
+- Updated `PgLayer` and `SqliteLayer` to remove static `bun`/`bun:sqlite` imports and use runtime-neutral clients.
+- Updated S3 and local depots to remove Bun-only file/driver assumptions (`Bun.S3Client`, `Bun.file`, `Bun.write`) while preserving existing depot APIs.
+- Simplified `DepotBlob` to runtime-neutral payloads (`Blob` or `ReadableStream<Uint8Array>`).
+
+**Packaging**
+- Switched build target to Node-compatible ESM output while keeping Bun support at runtime.
+- Externalized native/runtime drivers in the build (`argon2`, `mysql2`, `better-sqlite3`, `postgres`, `@aws-sdk/client-s3`).
+- Added Node runtime dependencies for adapters (`postgres`, `better-sqlite3`, `@aws-sdk/client-s3`).
+
+**Testing**
+- Added `src/runtime/nodeCompat.unit.test.ts` to smoke-test importing `dist/index.js` under Node.
+- Added `src/sources/layers/pg.unit.test.ts` and `src/sources/layers/mysql.unit.test.ts` to cover layer helper/query/schema paths without external databases.
+- Added `src/runtime/nodeAdapters.unit.test.ts` to cover Node adapter branches for Postgres, SQLite, and S3 via module mocks.
+- Updated `test:unit` to discover unit tests recursively via `find`, ensuring deeply nested test files are included in coverage.
+- Removed cross-suite destructive cleanup in integration/hostile tests so they can run in parallel against shared test services without intermittent table/depot collisions.
+- Kept existing unit/integration/hostile suites passing after adapter migration.
+
+**Docs**
+- Updated README runtime messaging and requirements for Bun + Node parity.
+
 ## 1.2.0
 
 Moves public type exports under `korm.types`, removing root-level type exports, adds streaming depot uploads, and streams backups to NDJSON.

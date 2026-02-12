@@ -121,6 +121,8 @@ type MysqlColumnExpectation = {
   columnType?: ColumnTypeExpectation;
 };
 
+const SUITE_RUN_ID = randomUUID().replace(/-/g, "").slice(0, 2);
+
 function tableName(namespace: string, kind: string): string {
   return `__items__${namespace}__${kind}`;
 }
@@ -135,7 +137,7 @@ function mysqlTableName(name: string): string {
 
 function makeId(prefix: string): string {
   const clean = prefix.toLowerCase().replace(/[^a-z0-9]/g, "");
-  return `${clean}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  return `${clean}${SUITE_RUN_ID}${randomUUID().replace(/-/g, "").slice(0, 5)}`;
 }
 
 function makeNames(prefix: string): { namespace: string; kind: string } {
@@ -435,66 +437,6 @@ function assertSqliteColumns(
   }
 }
 
-async function clearPg(): Promise<void> {
-  const tables = await pg._db.unsafe<any[]>(
-    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`,
-  );
-  for (const row of tables) {
-    const table = row.tablename ?? row.table_name ?? row.name;
-    if (!table) continue;
-    const safe = quoteIdent(String(table), '"');
-    await pg._db.unsafe(`DROP TABLE IF EXISTS ${safe} CASCADE`);
-  }
-  await pg._db.unsafe(
-    `DROP DOMAIN IF EXISTS ${quoteIdent("korm_rn_ref_text", '"')} CASCADE`,
-  );
-  await pg._db.unsafe(
-    `DROP DOMAIN IF EXISTS ${quoteIdent("korm_encrypted_json", '"')} CASCADE`,
-  );
-}
-
-async function clearMysql(): Promise<void> {
-  const [rows] = await mysql._pool.query<RowDataPacket[]>(
-    `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'`,
-  );
-  for (const row of rows as any[]) {
-    const table = row.table_name ?? row.TABLE_NAME ?? row.name;
-    if (!table) continue;
-    const safe = quoteIdent(String(table), "`");
-    await mysql._pool.query(`DROP TABLE IF EXISTS ${safe}`);
-  }
-}
-
-function clearSqlite(): void {
-  const tables = sqll._db
-    .prepare(`SELECT name FROM sqlite_master WHERE type='table'`)
-    .all() as { name?: string }[];
-  for (const row of tables) {
-    const name = row.name;
-    if (!name || name.startsWith("sqlite_")) continue;
-    const safe = quoteIdent(name, '"');
-    sqll._db.run(`DROP TABLE IF EXISTS ${safe}`);
-  }
-}
-
-async function clearAllDatabases(): Promise<void> {
-  clearSqlite();
-  await clearPg();
-  await clearMysql();
-}
-
-async function clearDepot(ident: DepotIdent): Promise<void> {
-  const rn = korm.rn(`[rn][depot::${ident}]:*`);
-  const depot = ident === "local" ? localDepot : s3Depot;
-  const files = await depot.listFiles(rn);
-  await Promise.all(files.map((file) => depot.deleteFile(file.rn)));
-}
-
-async function clearAllDepots(): Promise<void> {
-  await clearDepot("local");
-  await clearDepot("s3");
-}
-
 async function seedDepotFile(rnValue: string, content: string): Promise<void> {
   const file = korm.file({
     rn: korm.rn(rnValue),
@@ -725,14 +667,6 @@ async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
   }
   throw new Error(`Timed out waiting for signal file: ${path}`);
 }
-
-beforeAll(
-  async () => {
-    await clearAllDatabases();
-    await clearAllDepots();
-  },
-  { timeout: 30_000 },
-);
 
 async function queryItems<T extends JSONable>(
   ident: LayerIdent,
@@ -3225,8 +3159,6 @@ describe("layers integration", () => {
 
 afterAll(
   async () => {
-    await clearAllDatabases();
-    await clearAllDepots();
     await pg._db.end({ timeout: 1 });
     await mysql._pool.end();
     sqll._db.close();

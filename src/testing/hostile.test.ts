@@ -1,11 +1,4 @@
-import {
-  afterAll,
-  beforeAll,
-  describe,
-  expect,
-  setDefaultTimeout,
-  test,
-} from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,34 +54,8 @@ type SqliteLayer = korm.types.SqliteLayer;
 
 setDefaultTimeout(20_000);
 
-type LayerCleanup =
-  | { type: "sqlite"; path: string }
-  | { type: "pg"; config: string }
-  | { type: "mysql"; config: string };
-
-const trackedLayers = new Map<string, LayerCleanup>();
-const trackedDepots = new Map<string, string>();
 const clearedLayers = new Set<string>();
 const clearedDepots = new Set<string>();
-
-const layerKey = (config: LayerCleanup): string => {
-  switch (config.type) {
-    case "sqlite":
-      return `sqlite:${config.path}`;
-    case "pg":
-      return `pg:${config.config}`;
-    case "mysql":
-      return `mysql:${config.config}`;
-  }
-};
-
-const trackLayer = (config: LayerCleanup): void => {
-  trackedLayers.set(layerKey(config), config);
-};
-
-const trackDepot = (root: string): void => {
-  trackedDepots.set(root, root);
-};
 
 const quoteIdent = (name: string, quote: string): string => {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
@@ -110,95 +77,8 @@ const clearSqliteLayer = (layer: SqliteLayer): void => {
   }
 };
 
-const clearPgLayer = async (layer: SourceLayer): Promise<void> => {
-  const pg = layer as unknown as {
-    _db: { unsafe: (query: string, values?: unknown[]) => Promise<unknown[]> };
-  };
-  const tables = await pg._db.unsafe(
-    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`,
-  );
-  for (const row of tables as Array<{
-    tablename?: string;
-    table_name?: string;
-    name?: string;
-  }>) {
-    const table = row.tablename ?? row.table_name ?? row.name;
-    if (!table) continue;
-    const safe = quoteIdent(String(table), '"');
-    await pg._db.unsafe(`DROP TABLE IF EXISTS ${safe} CASCADE`);
-  }
-  await pg._db.unsafe(
-    `DROP DOMAIN IF EXISTS ${quoteIdent("korm_rn_ref_text", '"')} CASCADE`,
-  );
-  await pg._db.unsafe(
-    `DROP DOMAIN IF EXISTS ${quoteIdent("korm_encrypted_json", '"')} CASCADE`,
-  );
-};
-
-const clearMysqlLayer = async (layer: SourceLayer): Promise<void> => {
-  const mysql = layer as unknown as {
-    _pool: { query: (query: string, values?: unknown[]) => Promise<unknown> };
-  };
-  const [rows] = (await mysql._pool.query(
-    `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_type = 'BASE TABLE'`,
-  )) as [{ table_name?: string; TABLE_NAME?: string; name?: string }[]];
-  for (const row of rows) {
-    const table = row.table_name ?? row.TABLE_NAME ?? row.name;
-    if (!table) continue;
-    const safe = quoteIdent(String(table), "`");
-    await mysql._pool.query(`DROP TABLE IF EXISTS ${safe}`);
-  }
-};
-
-const clearLayerConfig = async (config: LayerCleanup): Promise<void> => {
-  if (config.type === "sqlite") {
-    const layer = korm.layers.sqlite(config.path);
-    try {
-      clearSqliteLayer(layer);
-    } finally {
-      layer.close();
-    }
-    return;
-  }
-  if (config.type === "pg") {
-    const layer = korm.layers.pg(config.config);
-    try {
-      await clearPgLayer(layer);
-    } finally {
-      await layer.close();
-    }
-    return;
-  }
-  if (config.type === "mysql") {
-    const layer = korm.layers.mysql(config.config);
-    try {
-      await clearMysqlLayer(layer);
-    } finally {
-      await layer.close();
-    }
-  }
-};
-
-const clearDepotRoot = async (root: string): Promise<void> => {
-  const depot = korm.depots.local(root);
-  const rn = korm.rn(`[rn][depot::${depot.identifier}]:*`);
-  const files = await depot.listFiles(rn);
-  await Promise.all(files.map((file) => depot.deleteFile(file.rn)));
-};
-
-const clearTrackedResources = async (): Promise<void> => {
-  for (const config of trackedLayers.values()) {
-    await clearLayerConfig(config);
-  }
-  for (const root of trackedDepots.values()) {
-    await clearDepotRoot(root);
-  }
-};
-
 const ensureSqliteLayer = async (pathValue: string): Promise<SqliteLayer> => {
-  const config: LayerCleanup = { type: "sqlite", path: pathValue };
-  const key = layerKey(config);
-  trackLayer(config);
+  const key = `sqlite:${pathValue}`;
   const layer = korm.layers.sqlite(pathValue);
   if (!clearedLayers.has(key)) {
     clearSqliteLayer(layer);
@@ -208,19 +88,10 @@ const ensureSqliteLayer = async (pathValue: string): Promise<SqliteLayer> => {
 };
 
 const ensurePgLayer = async (configValue: string): Promise<SourceLayer> => {
-  const config: LayerCleanup = { type: "pg", config: configValue };
-  const key = layerKey(config);
-  trackLayer(config);
-  const layer = korm.layers.pg(configValue);
-  if (!clearedLayers.has(key)) {
-    await clearPgLayer(layer);
-    clearedLayers.add(key);
-  }
-  return layer;
+  return korm.layers.pg(configValue);
 };
 
 const ensureLocalDepot = async (root: string): Promise<Depot> => {
-  trackDepot(root);
   const depot = korm.depots.local(root);
   if (!clearedDepots.has(root)) {
     const rn = korm.rn(`[rn][depot::${depot.identifier}]:*`);
@@ -230,24 +101,6 @@ const ensureLocalDepot = async (root: string): Promise<Depot> => {
   }
   return depot;
 };
-
-if (process.env.TESTING_PG_URL) {
-  trackLayer({ type: "pg", config: process.env.TESTING_PG_URL });
-}
-
-beforeAll(async () => {
-  await clearTrackedResources();
-  for (const key of trackedLayers.keys()) {
-    clearedLayers.add(key);
-  }
-  for (const root of trackedDepots.keys()) {
-    clearedDepots.add(root);
-  }
-});
-
-afterAll(async () => {
-  await clearTrackedResources();
-});
 
 class ThrowOnceLayer implements SourceLayer {
   public readonly type: "sqlite" = "sqlite";

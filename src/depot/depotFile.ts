@@ -20,11 +20,7 @@ function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
  * File-like payload accepted by depots, including readable byte streams.
  * Next: pass to `korm.file(...)` or `DepotFile.update(...)` to upload.
  */
-export type DepotBlob =
-  | Bun.BunFile
-  | Bun.S3File
-  | Blob
-  | ReadableStream<Uint8Array>;
+export type DepotBlob = Blob | ReadableStream<Uint8Array>;
 /** Lifecycle state for depot files. */
 export type DepotFileState = "floating" | "committed" | "uncommitted";
 
@@ -98,7 +94,7 @@ export abstract class DepotFileBase {
    * Next: call `.text()` or `.arrayBuffer()` on the returned Blob.
    */
   slice(begin?: number, end?: number, contentType?: string): Blob {
-    const sliceable = this.file as SliceableBlob | undefined;
+    const sliceable = this.file as unknown as SliceableBlob | undefined;
     if (sliceable && typeof sliceable.slice === "function") {
       return sliceable.slice(begin, end, contentType);
     }

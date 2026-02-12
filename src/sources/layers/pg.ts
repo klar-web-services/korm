@@ -12,7 +12,11 @@ import { Result } from "@fkws/klonk-result";
 import { QueryBuilder, type _QueryComponent } from "../../core/query";
 import { FloatingItem, UncommittedItem, Item } from "../../core/item";
 import { FloatingDepotFile } from "../../depot/depotFile";
-import { SQL } from "bun";
+import {
+  createPgClient,
+  type PgClient,
+  type PgConnectionInput,
+} from "../../runtime/pgClient";
 import { decrypt, Encrypt } from "../../security/encryption";
 import { cloneJson, type PathKey } from "../../core/resolveMeta";
 import {
@@ -49,10 +53,10 @@ type ColumnInfo = {
  * Create via `korm.layers.pg(...)` and add to a pool.
  */
 export class PgLayer implements SourceLayer {
-  public _db: SQL;
+  public _db: PgClient;
   public readonly type: "pg" = "pg";
   public readonly identifier: string;
-  private _connectionInput: string | SQL.Options;
+  private _connectionInput: PgConnectionInput;
   private _domainsEnsured: boolean = false;
   private _domainsAvailable: boolean = true;
   private _columnKindsCache: Map<string, Map<string, ColumnKind>> = new Map();
@@ -60,9 +64,9 @@ export class PgLayer implements SourceLayer {
   private _metaEnsured: boolean = false;
   private _schemaVersion: number = 0;
 
-  /** Create a Postgres layer from a connection string or bun SQL options. */
-  constructor(connectionStringOrOptions: string | SQL.Options) {
-    this._db = new SQL(connectionStringOrOptions as any);
+  /** Create a Postgres layer from a connection string or native options. */
+  constructor(connectionStringOrOptions: PgConnectionInput) {
+    this._db = createPgClient(connectionStringOrOptions);
     this.identifier = this._deriveIdentifier(connectionStringOrOptions);
     this._connectionInput = connectionStringOrOptions;
   }
@@ -391,7 +395,7 @@ export class PgLayer implements SourceLayer {
   }
 
   private _deriveIdentifier(
-    connectionStringOrOptions: string | SQL.Options,
+    connectionStringOrOptions: PgConnectionInput,
   ): string {
     const fallback = "pg@localhost";
 

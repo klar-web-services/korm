@@ -11,8 +11,11 @@ import type { JSONable } from "../../korm";
 import { Result } from "@fkws/klonk-result";
 import { QueryBuilder, type _QueryComponent } from "../../core/query";
 import { FloatingItem, UncommittedItem, Item } from "../../core/item";
-import { Database as SqliteDatabase } from "bun:sqlite";
 import { FloatingDepotFile } from "../../depot/depotFile";
+import {
+  createSqliteClient,
+  type SqliteClient,
+} from "../../runtime/sqliteClient";
 import { decrypt, Encrypt } from "../../security/encryption";
 import { cloneJson, type PathKey } from "../../core/resolveMeta";
 import {
@@ -42,7 +45,7 @@ const SQLITE_ENCRYPTED_TYPE = "ENCRYPTED_JSON";
  * Create via `korm.layers.sqlite(path)` and add to a pool.
  */
 export class SqliteLayer implements SourceLayer {
-  public _db: SqliteDatabase;
+  public _db: SqliteClient;
   public readonly type: "sqlite" = "sqlite";
   public readonly identifier: string;
   private _path: string;
@@ -52,7 +55,7 @@ export class SqliteLayer implements SourceLayer {
 
   /** Create a SQLite layer backed by the given file path. */
   constructor(path: string) {
-    this._db = new SqliteDatabase(path);
+    this._db = createSqliteClient(path);
     this._db.run(`PRAGMA journal_mode=DELETE;`);
     this.identifier = path;
     this._path = path;
@@ -540,11 +543,8 @@ export class SqliteLayer implements SourceLayer {
     if (cached && !opts.force) return cached;
     const tableName = this._quoteIdent(rawTableName);
     const info = this._db
-      .prepare<
-        { name: string; type: string },
-        any
-      >(`PRAGMA table_info(${tableName})`)
-      .all();
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all<{ name: string; type: string }>();
     this._tableInfoCache.set(rawTableName, info);
     return info;
   }
@@ -727,8 +727,8 @@ export class SqliteLayer implements SourceLayer {
     let tableInfo = this._getTableInfo(rawTableName);
     // Get current data as oldData from db. Drop rnId so ensureTables doesn't try to alter the PK column during revert.
     const currentRow = this._db
-      .prepare<any, any>(`SELECT * FROM ${safeTableName} WHERE "rnId" = ?`)
-      .get(item.rn!.id!);
+      .prepare(`SELECT * FROM ${safeTableName} WHERE "rnId" = ?`)
+      .get<Record<string, any>>(item.rn!.id!);
     if (!currentRow) {
       const rnValue = item.rn?.value() ?? "(unknown rn)";
       const baseLayer = `${this.type} source layer '${this.identifier}'`;
@@ -824,8 +824,8 @@ export class SqliteLayer implements SourceLayer {
     if (tableInfo.length === 0) return undefined;
     const safeTableName = this._quoteIdent(rawTableName);
     const currentRow = this._db
-      .prepare<any, any>(`SELECT * FROM ${safeTableName} WHERE "rnId" = ?`)
-      .get(rn.id!);
+      .prepare(`SELECT * FROM ${safeTableName} WHERE "rnId" = ?`)
+      .get<Record<string, any>>(rn.id!);
     if (!currentRow) return undefined;
     if (
       this._needsTableInfoRefresh(currentRow as Record<string, any>, tableInfo)
@@ -852,8 +852,8 @@ export class SqliteLayer implements SourceLayer {
     }
     const safeTableName = this._quoteIdent(rawTableName);
     const existing = this._db
-      .prepare<any, any>(`SELECT 1 FROM ${safeTableName} WHERE "rnId" = ?`)
-      .get(rn.id!);
+      .prepare(`SELECT 1 FROM ${safeTableName} WHERE "rnId" = ?`)
+      .get<Record<string, unknown>>(rn.id!);
     if (!existing) {
       return {
         success: false,
@@ -1110,8 +1110,8 @@ export class SqliteLayer implements SourceLayer {
         return new Result({ success: true, data: [] });
       }
       rawItems = this._db
-        .prepare<T & { rnId: string }, any>(queryString)
-        .all(params);
+        .prepare(queryString)
+        .all<T & { rnId: string }>(params);
       if (
         rawItems.length > 0 &&
         this._needsTableInfoRefresh(
@@ -1168,7 +1168,7 @@ export class SqliteLayer implements SourceLayer {
     let schemaChanged = false;
 
     const exists = this._db
-      .prepare<{ e: 0 | 1 }, [string]>(
+      .prepare(
         `
             SELECT EXISTS(
                 SELECT 1
@@ -1177,7 +1177,7 @@ export class SqliteLayer implements SourceLayer {
             ) AS e;
         `,
       )
-      .get(rawTableName);
+      .get<{ e: 0 | 1 }>(rawTableName);
 
     if (!exists || exists.e === 0) {
       let createString = `CREATE TABLE IF NOT EXISTS ${tableName} ( "rnId" ID_TEXT PRIMARY KEY, `;
@@ -1212,11 +1212,8 @@ export class SqliteLayer implements SourceLayer {
 
     // Table exists: ensure columns
     const columns = this._db
-      .prepare<
-        { name: string; type: string },
-        any
-      >(`PRAGMA table_info(${tableName})`)
-      .all();
+      .prepare(`PRAGMA table_info(${tableName})`)
+      .all<{ name: string; type: string }>();
 
     for (const key in item.data) {
       const rawColumnName = key;

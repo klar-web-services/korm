@@ -18,23 +18,18 @@ async function writeStreamToPath(
   filePath: string,
   stream: ReadableStream<Uint8Array>,
 ): Promise<void> {
-  const writer = Bun.file(filePath).writer();
-  const reader = stream.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        writer.write(value);
-      }
-    }
-    await writer.end();
-  } catch (error) {
-    await writer.end(error instanceof Error ? error : new Error(String(error)));
-    throw error;
-  } finally {
-    reader.releaseLock();
-  }
+  const payload = new Uint8Array(await new Response(stream).arrayBuffer());
+  await fs.promises.writeFile(filePath, payload);
+}
+
+async function writeBlobToPath(filePath: string, blob: Blob): Promise<void> {
+  const payload = new Uint8Array(await blob.arrayBuffer());
+  await fs.promises.writeFile(filePath, payload);
+}
+
+async function readBlobFromPath(filePath: string): Promise<Blob> {
+  const payload = await fs.promises.readFile(filePath);
+  return new Blob([payload]);
 }
 
 /**
@@ -94,7 +89,7 @@ export class LocalDepot implements Depot {
     if (isReadableStream(file.file)) {
       await writeStreamToPath(path, file.file);
     } else {
-      await Bun.write(path, file.file as Blob);
+      await writeBlobToPath(path, file.file as Blob);
     }
     return path;
   }
@@ -105,7 +100,7 @@ export class LocalDepot implements Depot {
       throw new Error(`Expected depot file RN but got "${rn.value()}".`);
     }
     const path = this._pathFromRn(rn);
-    return new DepotFile(rn, Bun.file(path));
+    return new DepotFile(rn, await readBlobFromPath(path));
   }
 
   /** @inheritdoc */
@@ -160,7 +155,9 @@ export class LocalDepot implements Depot {
         if (parsed.isErr()) {
           throw parsed.error;
         }
-        files.push(new DepotFile(parsed.unwrap(), Bun.file(entryPath)));
+        files.push(
+          new DepotFile(parsed.unwrap(), await readBlobFromPath(entryPath)),
+        );
       }
     };
     await walk(dirPath);
@@ -206,7 +203,7 @@ export class LocalDepot implements Depot {
     if (isReadableStream(newFile.file)) {
       await writeStreamToPath(path, newFile.file);
     } else {
-      await Bun.write(path, newFile.file as Blob);
+      await writeBlobToPath(path, newFile.file as Blob);
     }
     return true;
   }

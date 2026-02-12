@@ -310,7 +310,7 @@ type PoolOptions = {
 type FileParams<T extends JSONable = JSONable> = {
   /** Depot file RN or RN string; must point to a depot file. */
   rn: RN<T> | string;
-  /** File payload to upload (Blob, Bun file, or readable stream). */
+  /** File payload to upload (Blob or readable stream). */
   file: DepotBlob;
 };
 

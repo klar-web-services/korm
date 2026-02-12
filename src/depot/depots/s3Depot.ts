@@ -3,6 +3,7 @@ import { DepotFile, type DepotFileBase } from "../depotFile";
 import { RN } from "../../core/rn";
 import { createDepotIdentifier } from "../depotIdent";
 import crypto from "node:crypto";
+import { createS3Client, type S3ClientAdapter } from "../../runtime/s3Client";
 
 function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
   return (
@@ -40,14 +41,14 @@ export type S3DepotOptions = {
 };
 
 /**
- * S3-compatible depot implementation backed by Bun.S3Client.
+ * S3-compatible depot implementation backed by runtime-specific S3 clients.
  * Use `korm.depots.s3(...)` to create and include in a pool.
  */
 export class S3Depot implements Depot {
   readonly __DEPOT__: true = true;
   identifier: string;
   readonly type: "s3" = "s3";
-  private _client: Bun.S3Client;
+  private _client: S3ClientAdapter;
   private _prefix: string;
   private _bucket: string;
   private _endpoint?: string;
@@ -96,14 +97,14 @@ export class S3Depot implements Depot {
     this._virtualHostedStyle = options.virtualHostedStyle ?? false;
     this._autoCreateBucket = options.autoCreateBucket ?? true;
     this._prefix = this._normalizePrefix(options.prefix ?? "");
-    this._client = new Bun.S3Client({
-      bucket: options.bucket,
-      endpoint: options.endpoint,
-      region: options.region,
-      accessKeyId: options.accessKeyId,
-      secretAccessKey: options.secretAccessKey,
-      sessionToken: options.sessionToken,
-      virtualHostedStyle: options.virtualHostedStyle,
+    this._client = createS3Client({
+      bucket: this._bucket,
+      endpoint: this._endpoint,
+      region: this._region,
+      accessKeyId: this._accessKeyId,
+      secretAccessKey: this._secretAccessKey,
+      sessionToken: this._sessionToken,
+      virtualHostedStyle: this._virtualHostedStyle,
     });
   }
 
@@ -343,7 +344,7 @@ export class S3Depot implements Depot {
     }
     await this._ensureBucket();
     const key = this._keyFor(rn);
-    return new DepotFile(rn, this._client.file(key));
+    return new DepotFile(rn, await this._client.read(key));
   }
 
   /** @inheritdoc */
@@ -373,7 +374,9 @@ export class S3Depot implements Depot {
       if (rnRes.isErr()) {
         throw rnRes.error;
       }
-      files.push(new DepotFile(rnRes.unwrap(), this._client.file(entry.key)));
+      files.push(
+        new DepotFile(rnRes.unwrap(), await this._client.read(entry.key)),
+      );
     }
     return files;
   }

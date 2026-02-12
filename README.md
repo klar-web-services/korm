@@ -10,7 +10,7 @@
 
 # @fkws/korm - Unified Data Runtime
 
-korm is a Unified Data Runtime for Bun that treats SQL databases, references, and file storage as one cohesive data model. You get type-safe items, cross-layer references, encrypted fields, depot-backed files, and an optional undo/redo WAL for crash safety.
+korm is a Unified Data Runtime for Bun and Node.js that treats SQL databases, references, and file storage as one cohesive data model. You get type-safe items, cross-layer references, encrypted fields, depot-backed files, and an optional undo/redo WAL for crash safety.
 
 [![Tests](https://github.com/klar-web-services/korm/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/klar-web-services/korm/actions/workflows/ci.yml)
 
@@ -41,12 +41,24 @@ These run in GitHub Actions on `main` and publish both a run summary and a struc
 bun add @fkws/korm
 ```
 
-korm is built for Bun. The examples in `examples/` assume Bun runtime.
+```bash
+npm install @fkws/korm
+```
+
+korm runs on both Bun and Node.js. The examples in `examples/` use Bun commands, but the API surface is runtime-agnostic.
 
 ## Requirements
 
-- Bun >= 1.0.0.
-- Node >= 18 and < 24 if you run korm under Node (argon2 needs a compatible native build).
+- Bun >= 1.0.0, or Node >= 18 and < 24 (argon2 needs a compatible native build).
+
+## Runtime adapters
+
+korm selects native bindings at runtime:
+
+- SQLite: `bun:sqlite` on Bun, `better-sqlite3` on Node.
+- Postgres: `Bun.SQL` on Bun, `postgres` on Node.
+- S3 depots: `Bun.S3Client` on Bun, AWS SDK (`@aws-sdk/client-s3`) on Node.
+- Local depots: Node filesystem APIs on both runtimes.
 
 ## Quick Start
 
@@ -616,7 +628,7 @@ Types referenced below live under `korm.types` (for example, `korm.types.RN`).
 - `korm.item<T>(pool)` -> `korm.types.UninitializedItem<T>`
 - `korm.rn(str)` -> `korm.types.RN<T>`
 - `korm.file({ rn, file })` -> `FloatingDepotFile`
-- `korm.layers.sqlite(path)` / `pg(...)` / `mysql(...)`
+- `korm.layers.sqlite(path)` / `pg(urlOrOptions)` / `mysql(...)`
 - `korm.qfns` -> `{ eq, and, or, not, gt, gte, lt, lte, like, inList }`
 - `korm.resolve(...paths)` -> resolve options helper for query and `from.rn(...)`
 - `korm.encrypt(value)` / `korm.password(value)`
