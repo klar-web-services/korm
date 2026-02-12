@@ -21,7 +21,7 @@
     "build:watch": "bun build ./index.ts --outdir ./dist --target node --format esm --external argon2 --external mysql2 --external better-sqlite3 --external postgres --external @aws-sdk/client-s3 --watch",
     "clean": "rm -rf dist",
     "test:stage": "bash ./src/testing/stage-resources.sh",
-    "test:unit": "bun run build && bun test --coverage $(find ./src -name \"*.unit.test.ts\" -print)",
+    "test:unit": "bun run build && bun test --coverage --max-concurrency=1 $(find ./src -name \"*.unit.test.ts\" -print)",
     "test:integration": "bun run build && bun test \"src/testing/integration.test.ts\"",
     "test:hostile": "bun run build && bun test \"src/testing/hostile.test.ts\"",
     "release:notes": "bun scripts/release_notes.ts"

@@ -20,6 +20,7 @@ Makes korm runtime-agnostic across Bun and Node.js by replacing Bun-only binding
 - Added `src/sources/layers/pg.unit.test.ts` and `src/sources/layers/mysql.unit.test.ts` to cover layer helper/query/schema paths without external databases.
 - Added `src/runtime/nodeAdapters.unit.test.ts` to cover Node adapter branches for Postgres, SQLite, and S3 via module mocks.
 - Updated `test:unit` to discover unit tests recursively via `find`, ensuring deeply nested test files are included in coverage.
+- Updated unit test execution in scripts/CI to run after build and with controlled concurrency, preventing global module mocks from leaking across files.
 - Removed cross-suite destructive cleanup in integration/hostile tests so they can run in parallel against shared test services without intermittent table/depot collisions.
 - Kept existing unit/integration/hostile suites passing after adapter migration.
 
