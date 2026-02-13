@@ -31,7 +31,8 @@ jobs:
       - name: Run unit tests (JUnit)
         run: |
           mkdir -p test-results
-          bun test --coverage ./src/*.unit.test.ts ./src/**/*.unit.test.ts --reporter junit --reporter-outfile test-results/unit.xml
+          mapfile -t unit_tests < <(find ./src -name "*.unit.test.ts" -print)
+          bun test --coverage --max-concurrency=1 "${unit_tests[@]}" --reporter junit --reporter-outfile test-results/unit.xml
       - name: Start test resources
         run: bun run test:stage
       - name: Run integration tests (JUnit)
