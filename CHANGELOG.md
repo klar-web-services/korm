@@ -19,6 +19,7 @@ Makes korm runtime-agnostic across Bun and Node.js by replacing Bun-only binding
 - Added `src/runtime/nodeCompat.unit.test.ts` to smoke-test importing `dist/index.js` under Node.
 - Added `src/sources/layers/pg.unit.test.ts` and `src/sources/layers/mysql.unit.test.ts` to cover layer helper/query/schema paths without external databases.
 - Added `src/runtime/nodeAdapters.unit.test.ts` to cover Node adapter branches for Postgres, SQLite, and S3 via module mocks.
+- Updated Bun adapter unit tests to mock runtime detection instead of mutating global Bun bindings, improving compatibility across Bun versions.
 - Updated `test:unit` to discover unit tests recursively via `find`, ensuring deeply nested test files are included in coverage.
 - Updated unit test execution in scripts/CI to run after build and with controlled concurrency, preventing global module mocks from leaking across files.
 - Added `lint:actions` (actionlint) and chained it into test scripts so workflow issues fail locally before CI.

@@ -1,16 +1,10 @@
-import { describe, expect, test } from "bun:test";
-import { createPgClient } from "./pgClient";
-import { createS3Client } from "./s3Client";
+import { describe, expect, mock, test } from "bun:test";
 
-type BunLike = {
-  SQL: unknown;
-  S3Client: unknown;
-};
+const uniqueSuffix = (): string =>
+  `?test=${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 describe("runtime adapters (bun path)", () => {
   test("createPgClient delegates to Bun.SQL", async () => {
-    const bunAny = Bun as unknown as BunLike;
-    const originalSql = bunAny.SQL;
     const calls: Array<{ query: string; values?: unknown[] }> = [];
     const ended: unknown[] = [];
 
@@ -25,8 +19,17 @@ describe("runtime adapters (bun path)", () => {
       }
     }
 
-    bunAny.SQL = FakeSql as unknown;
+    mock.module("./engine", () => ({
+      getBunGlobal: () => ({ SQL: FakeSql }),
+      isBunRuntime: () => true,
+      getRuntimeEngine: () => "bun",
+    }));
+
     try {
+      const modPath = `./pgClient.ts${uniqueSuffix()}`;
+      const { createPgClient } = (await import(
+        modPath
+      )) as typeof import("./pgClient");
       const client = createPgClient("postgres://localhost/test");
       const rows = await client.unsafe<Array<{ ok: boolean }>>("SELECT 1");
       await client.unsafe("SELECT $1", [99]);
@@ -36,13 +39,11 @@ describe("runtime adapters (bun path)", () => {
       expect(calls[1]?.values).toEqual([99]);
       expect(ended).toEqual([{ timeout: 3 }]);
     } finally {
-      bunAny.SQL = originalSql;
+      mock.restore();
     }
   });
 
   test("createS3Client delegates to Bun.S3Client", async () => {
-    const bunAny = Bun as unknown as BunLike;
-    const originalS3 = bunAny.S3Client;
     const writes: string[] = [];
     const deletes: string[] = [];
 
@@ -65,14 +66,22 @@ describe("runtime adapters (bun path)", () => {
       }
       file(_key: string): { arrayBuffer: () => Promise<ArrayBuffer> } {
         return {
-          arrayBuffer: async () =>
-            await new Blob(["hello"]).arrayBuffer(),
+          arrayBuffer: async () => await new Blob(["hello"]).arrayBuffer(),
         };
       }
     }
 
-    bunAny.S3Client = FakeS3Client as unknown;
+    mock.module("./engine", () => ({
+      getBunGlobal: () => ({ S3Client: FakeS3Client }),
+      isBunRuntime: () => true,
+      getRuntimeEngine: () => "bun",
+    }));
+
     try {
+      const modPath = `./s3Client.ts${uniqueSuffix()}`;
+      const { createS3Client } = (await import(
+        modPath
+      )) as typeof import("./s3Client");
       const client = createS3Client({ bucket: "demo" });
       await client.write("a.txt", new Blob(["hello"]));
       const blob = await client.read("a.txt");
@@ -84,7 +93,7 @@ describe("runtime adapters (bun path)", () => {
       expect(listed.contents?.[0]?.key).toBe("a.txt");
       expect(listed.commonPrefixes?.[0]?.prefix).toBe("users:");
     } finally {
-      bunAny.S3Client = originalS3;
+      mock.restore();
     }
   });
 });
