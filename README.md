@@ -604,10 +604,14 @@ npx tsc --noEmit
 ```
 
 ```bash
+fish -lc "bun run lint:actions"
 fish -lc "bun run test:unit"
 fish -lc "bun run test:integration"
 fish -lc "bun run test:hostile"
 ```
+
+`test:unit`, `test:integration`, and `test:hostile` run workflow linting
+(`actionlint`) first so workflow issues fail locally before CI.
 
 To run integration/hostile tests locally without external services, start the
 Docker resources and load the generated env file:

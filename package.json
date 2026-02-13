@@ -20,15 +20,17 @@
     "build:types": "tsc -p tsconfig.build.json",
     "build:watch": "bun build ./index.ts --outdir ./dist --target node --format esm --external argon2 --external mysql2 --external better-sqlite3 --external postgres --external @aws-sdk/client-s3 --watch",
     "clean": "rm -rf dist",
+    "lint:actions": "node-actionlint",
     "test:stage": "bash ./src/testing/stage-resources.sh",
-    "test:unit": "bun run build && bun test --coverage --max-concurrency=1 $(find ./src -name \"*.unit.test.ts\" -print)",
-    "test:integration": "bun run build && bun test \"src/testing/integration.test.ts\"",
-    "test:hostile": "bun run build && bun test \"src/testing/hostile.test.ts\"",
+    "test:unit": "bun run lint:actions && bun run build && bun test --coverage --max-concurrency=1 $(find ./src -name \"*.unit.test.ts\" -print)",
+    "test:integration": "bun run lint:actions && bun run build && bun test \"src/testing/integration.test.ts\"",
+    "test:hostile": "bun run lint:actions && bun run build && bun test \"src/testing/hostile.test.ts\"",
     "release:notes": "bun scripts/release_notes.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "bun-types": "latest"
+    "bun-types": "latest",
+    "node-actionlint": "^1.2.2"
   },
   "bin": {
     "generate-encryption-key": "./scripts/generate_encryption_key.js"

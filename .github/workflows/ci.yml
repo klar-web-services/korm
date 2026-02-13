@@ -35,7 +35,8 @@ jobs:
         run: |
           mkdir -p test-results
           bun run build
-          bun test --coverage --max-concurrency=1 $(find ./src -name "*.unit.test.ts" -print) --reporter junit --reporter-outfile test-results/unit.xml
+          mapfile -t unit_tests < <(find ./src -name "*.unit.test.ts" -print)
+          bun test --coverage --max-concurrency=1 "${unit_tests[@]}" --reporter junit --reporter-outfile test-results/unit.xml
       - name: Publish unit test report
         uses: mikepenz/action-junit-report@v4
         with:
