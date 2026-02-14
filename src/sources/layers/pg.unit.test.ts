@@ -178,4 +178,37 @@ describe("PgLayer helpers", () => {
       "does not exist in pg source layer",
     );
   });
+
+  test("decode rehydrates RN domain values", async () => {
+    const layer = makePgLayer() as any;
+    const ownerRn = `[rn]:users:basic:${UUID}`;
+    const malformed = "[rn]:users:basic:not-a-uuid";
+    const decoded = await layer._decodeRowUsingTableInfo(
+      {
+        owner: ownerRn,
+        invalidRef: malformed,
+        note: "ok",
+      },
+      [
+        {
+          name: "owner",
+          dataType: "text",
+          domainName: "korm_rn_ref_text",
+          udtName: "korm_rn_ref_text",
+        },
+        {
+          name: "invalidRef",
+          dataType: "text",
+          domainName: "korm_rn_ref_text",
+          udtName: "korm_rn_ref_text",
+        },
+        { name: "note", dataType: "text" },
+      ],
+    );
+
+    expect(decoded.owner).toBeInstanceOf(RN);
+    expect(decoded.owner.value()).toBe(ownerRn);
+    expect(decoded.invalidRef).toBe(malformed);
+    expect(decoded.note).toBe("ok");
+  });
 });

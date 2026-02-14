@@ -24,7 +24,7 @@ import {
   type EncryptedPayload,
 } from "../../core/encryptionMeta";
 import type { ColumnKind } from "../../core/columnKind";
-import type { RN } from "../../core/rn";
+import { RN } from "../../core/rn";
 import { safeAssign } from "../../core/safeObject";
 import {
   BACKUP_EXTENSION,
@@ -579,7 +579,14 @@ export class SqliteLayer implements SourceLayer {
       const t = typeByName.get(k);
       if (!t) continue;
 
-      if (t === "BOOLEAN") {
+      if (t === SQLITE_RN_TYPE) {
+        if (typeof v === "string" && v.startsWith("[rn]")) {
+          const parsed = RN.create(v);
+          if (parsed.isOk()) {
+            safeAssign(out, k, parsed.unwrap());
+          }
+        }
+      } else if (t === "BOOLEAN") {
         // SQLite commonly returns 0/1 for BOOLEAN-ish columns
         if (v === null || v === undefined) continue;
         safeAssign(out, k, Boolean(v));

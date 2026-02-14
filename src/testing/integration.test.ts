@@ -1770,7 +1770,9 @@ describe("layers integration", () => {
       .get();
     const carsByOwnerItems = carsByOwner.unwrap();
     expect(carsByOwnerItems.length).toBe(1);
-    expect(carsByOwnerItems[0]!.data?.owner).toBe(user.rn!.value());
+    const ownerRef = carsByOwnerItems[0]!.data?.owner as any;
+    expect(typeof ownerRef?.value).toBe("function");
+    expect(ownerRef.value()).toBe(user.rn!.value());
   });
 
   test("resolvePaths handles arrays and reference overrides", async () => {

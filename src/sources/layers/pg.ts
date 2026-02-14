@@ -25,7 +25,7 @@ import {
   type EncryptedPayload,
 } from "../../core/encryptionMeta";
 import type { ColumnKind } from "../../core/columnKind";
-import type { RN } from "../../core/rn";
+import { RN } from "../../core/rn";
 import { safeAssign } from "../../core/safeObject";
 import {
   BACKUP_EXTENSION,
@@ -755,6 +755,8 @@ export class PgLayer implements SourceLayer {
     for (const [k, v] of Object.entries(out)) {
       const info = typeByName.get(k);
       if (!info) continue;
+      const isRnDomain =
+        info.domainName === PG_RN_DOMAIN || info.udtName === PG_RN_DOMAIN;
       const isEncryptedDomain =
         info.domainName === PG_ENCRYPTED_DOMAIN ||
         info.udtName === PG_ENCRYPTED_DOMAIN;
@@ -763,7 +765,14 @@ export class PgLayer implements SourceLayer {
         info.dataType === "JSON" ||
         isEncryptedDomain;
 
-      if (isJson) {
+      if (isRnDomain) {
+        if (typeof v === "string" && v.startsWith("[rn]")) {
+          const parsed = RN.create(v);
+          if (parsed.isOk()) {
+            safeAssign(out, k, parsed.unwrap());
+          }
+        }
+      } else if (isJson) {
         let parsed: any = v;
         if (typeof v === "string") {
           try {

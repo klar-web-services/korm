@@ -167,4 +167,33 @@ describe("MysqlLayer helpers", () => {
       "does not exist in mysql source layer",
     );
   });
+
+  test("decode rehydrates RN columns via metadata kinds", async () => {
+    const layer = makeMysqlLayer() as any;
+    const ownerRn = `[rn]:users:basic:${UUID}`;
+    const malformed = "[rn]:users:basic:not-a-uuid";
+    const decoded = await layer._decodeRowUsingTableInfo(
+      {
+        owner: ownerRn,
+        invalidRef: malformed,
+        note: "ok",
+      },
+      [
+        { name: "owner", type: "text", column_type: "text" },
+        { name: "invalidRef", type: "text", column_type: "text" },
+        { name: "note", type: "text", column_type: "text" },
+      ],
+      {
+        columnKinds: new Map([
+          ["owner", "rn"],
+          ["invalidRef", "rn"],
+        ]),
+      },
+    );
+
+    expect(decoded.owner).toBeInstanceOf(RN);
+    expect(decoded.owner.value()).toBe(ownerRn);
+    expect(decoded.invalidRef).toBe(malformed);
+    expect(decoded.note).toBe("ok");
+  });
 });

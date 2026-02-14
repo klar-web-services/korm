@@ -307,9 +307,11 @@ Supported patterns:
 
 If you don't call `korm.resolve(...)` but query a nested RN path (e.g. `owner.username`), korm will automatically resolve just enough to filter safely. It groups RN lookups by layer to keep the number of DB round trips small.
 
+For unresolved RN columns, returned item data keeps RN values as `korm.types.RN<T>` objects, so calling `.value()` is safe on those fields. korm still persists references as RN strings in the underlying SQL rows.
+
 ### References and cascading updates
 
-When you resolve an RN and modify the referenced object, korm will persist the changes **in the referenced layer**, while the parent object continues to store the RN string.
+When you resolve an RN and modify the referenced object, korm will persist the changes **in the referenced layer**, while the parent object continues to store the RN string in storage.
 
 This preserves referential integrity and avoids embedding large resolved blobs in unrelated tables.
 

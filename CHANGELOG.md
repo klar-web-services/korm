@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.1
+
+Fixes RN reference decode consistency so unresolved RN fields read from SQL layers are hydrated back to `RN` objects at runtime.
+
+**Runtime**
+- Rehydrated RN-typed columns during row decode in SQLite, Postgres, and MySQL layers so unresolved references consistently expose `.value()` (`src/sources/layers/{sqlite,pg,mysql}.ts`).
+- Kept fail-soft behavior for malformed RN-like strings by leaving invalid values as their original string payload.
+- Preserved storage format parity across layers: references remain RN strings in SQL rows while reads now hydrate RN objects for RN columns.
+
+**Testing**
+- Added SQLite/PG/MySQL decode-focused unit coverage to assert RN column hydration and malformed RN pass-through (`src/sources/layers/{sqlite,pg,mysql}.unit.test.ts`).
+- Added end-to-end korm flow coverage that reproduces querying typed RN references and verifies `.value()` works (`src/testing/kormFlow.unit.test.ts`).
+- Updated integration assertions to validate RN object shape for unresolved RN fields where applicable (`src/testing/integration.test.ts`).
+
+**Docs**
+- Documented unresolved RN read behavior as RN objects while clarifying storage remains RN strings in `README.md`.
+
 ## 1.3.0
 
 Makes korm runtime-agnostic across Bun and Node.js by replacing Bun-only bindings with runtime adapters and Node-compatible build output.

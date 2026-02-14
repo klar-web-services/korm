@@ -135,6 +135,70 @@ describe("korm core flow", () => {
     }
   });
 
+  test("query rehydrates RN references as RN objects", async () => {
+    type Agent = { nickname: string };
+    type A2AMessage = {
+      from: RN<Agent>;
+      to: RN<Agent>;
+      message: string;
+    };
+
+    const { pool, root } = await createTempPool();
+    try {
+      const a = (
+        await korm
+          .item<Agent>(pool)
+          .from.data({
+            namespace: "agents",
+            kind: "registered",
+            data: { nickname: "a" },
+          })
+          .create()
+      ).unwrap();
+
+      const b = (
+        await korm
+          .item<Agent>(pool)
+          .from.data({
+            namespace: "agents",
+            kind: "registered",
+            data: { nickname: "b" },
+          })
+          .create()
+      ).unwrap();
+
+      (
+        await korm
+          .item<A2AMessage>(pool)
+          .from.data({
+            namespace: "messages",
+            kind: "a2a",
+            data: {
+              from: a.rn!,
+              to: b.rn!,
+              message: "hello",
+            },
+          })
+          .create()
+      ).unwrap();
+
+      const rows = (
+        await korm
+          .item<A2AMessage>(pool)
+          .from.query(korm.rn("[rn][from::main]:messages:a2a:*"))
+          .get()
+      ).unwrap();
+      expect(rows.length).toBe(1);
+
+      const fromRef = rows[0]!.data!.from;
+      expect(typeof (fromRef as any)?.value).toBe("function");
+      expect(fromRef.value()).toBe(a.rn!.value());
+    } finally {
+      await pool.close();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("deleteItem reports missing rows", async () => {
     const { pool, root } = await createTempPool();
     try {

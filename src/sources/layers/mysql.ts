@@ -27,7 +27,7 @@ import {
 } from "../../core/encryptionMeta";
 import type { ColumnKind } from "../../core/columnKind";
 import crypto from "node:crypto";
-import type { RN } from "../../core/rn";
+import { RN } from "../../core/rn";
 import { safeAssign } from "../../core/safeObject";
 import {
   BACKUP_EXTENSION,
@@ -725,7 +725,11 @@ export class MysqlLayer implements SourceLayer {
   private async _decodeRowUsingTableInfo<T extends Record<string, any>>(
     row: T,
     tableInfo: ColumnInfo[],
-    opts: { decryptEncrypted?: boolean; encryptionMeta?: EncryptionMeta } = {},
+    opts: {
+      decryptEncrypted?: boolean;
+      encryptionMeta?: EncryptionMeta;
+      columnKinds?: Map<string, ColumnKind>;
+    } = {},
   ): Promise<T> {
     const typeByName = new Map(
       tableInfo.map((c) => [
@@ -745,6 +749,17 @@ export class MysqlLayer implements SourceLayer {
     for (const [k, v] of Object.entries(out)) {
       const info = typeByName.get(k);
       if (!info) continue;
+      const columnKind = opts.columnKinds?.get(k);
+
+      if (columnKind === "rn") {
+        if (typeof v === "string" && v.startsWith("[rn]")) {
+          const parsed = RN.create(v);
+          if (parsed.isOk()) {
+            safeAssign(out, k, parsed.unwrap());
+          }
+        }
+        continue;
+      }
 
       const normalized = this._normalizeExistingType(
         info.dataType,
@@ -918,11 +933,15 @@ export class MysqlLayer implements SourceLayer {
     ) {
       tableInfo = await this._getTableInfo(rawTableName, { force: true });
     }
+    const columnKinds = await this.getColumnKinds(
+      item.rn!.namespace!,
+      item.rn!.kind!,
+    );
     const { rnId: _rnId, ...currentDataRaw } = currentRow;
     const currentData = await this._decodeRowUsingTableInfo(
       currentDataRaw as any,
       tableInfo,
-      { decryptEncrypted: false },
+      { decryptEncrypted: false, columnKinds },
     );
 
     const data = (item.data ?? {}) as Record<string, any>;
@@ -1004,11 +1023,12 @@ export class MysqlLayer implements SourceLayer {
     ) {
       tableInfo = await this._getTableInfo(rawTableName, { force: true });
     }
+    const columnKinds = await this.getColumnKinds(rn.namespace!, rn.kind!);
     const { rnId: _rnId, ...currentDataRaw } = currentRow;
     return await this._decodeRowUsingTableInfo(
       currentDataRaw as any,
       tableInfo,
-      { decryptEncrypted: false },
+      { decryptEncrypted: false, columnKinds },
     );
   }
 
@@ -1337,6 +1357,10 @@ export class MysqlLayer implements SourceLayer {
       });
     }
 
+    const columnKinds = await this.getColumnKinds(
+      query.rn!.namespace!,
+      query.rn!.kind!,
+    );
     const mods = Array.from(query.rn!.mods.entries());
     const items = await Promise.all(
       rawItems.map(async (row) => {
@@ -1348,6 +1372,7 @@ export class MysqlLayer implements SourceLayer {
           tableInfo,
           {
             encryptionMeta,
+            columnKinds,
           },
         );
         const rn = korm.rn(
