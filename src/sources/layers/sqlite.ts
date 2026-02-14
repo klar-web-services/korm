@@ -56,7 +56,6 @@ export class SqliteLayer implements SourceLayer {
   /** Create a SQLite layer backed by the given file path. */
   constructor(path: string) {
     this._db = createSqliteClient(path);
-    this._db.run(`PRAGMA journal_mode=DELETE;`);
     this.identifier = path;
     this._path = path;
   }

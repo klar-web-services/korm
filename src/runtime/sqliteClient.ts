@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { isBunRuntime } from "./engine";
 
 const runtimeRequire = createRequire(import.meta.url);
+const DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 5_000;
 
 type SqliteParamInput = unknown[] | Record<string, unknown> | undefined;
 
@@ -143,6 +144,7 @@ function loadBetterSqliteCtor(): BetterSqliteCtor {
 function createBunSqliteClient(path: string): SqliteClient {
   const DatabaseCtor = loadBunSqliteCtor();
   const db = new DatabaseCtor(path);
+  db.run(`PRAGMA busy_timeout=${DEFAULT_SQLITE_BUSY_TIMEOUT_MS};`);
   return {
     run(sql: string, params?: SqliteParamInput): unknown {
       if (params === undefined) {
@@ -162,6 +164,7 @@ function createBunSqliteClient(path: string): SqliteClient {
 function createNodeSqliteClient(path: string): SqliteClient {
   const DatabaseCtor = loadBetterSqliteCtor();
   const db = new DatabaseCtor(path);
+  db.prepare(`PRAGMA busy_timeout=${DEFAULT_SQLITE_BUSY_TIMEOUT_MS};`).run();
   return {
     run(sql: string, params?: SqliteParamInput): unknown {
       const statement = db.prepare(sql);

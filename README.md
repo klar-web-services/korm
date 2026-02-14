@@ -56,6 +56,8 @@ korm runs on both Bun and Node.js. The examples in `examples/` use Bun commands,
 korm selects native bindings at runtime:
 
 - SQLite: `bun:sqlite` on Bun, `better-sqlite3` on Node.
+  - korm sets `PRAGMA busy_timeout=5000` on SQLite connections.
+  - korm does not force `journal_mode` during layer construction; the database's current mode is respected.
 - Postgres: `Bun.SQL` on Bun, `postgres` on Node.
 - S3 depots: `Bun.S3Client` on Bun, AWS SDK (`@aws-sdk/client-s3`) on Node.
 - Local depots: Node filesystem APIs on both runtimes.

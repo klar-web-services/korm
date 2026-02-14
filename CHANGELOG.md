@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.3.2
+
+Hardens SQLite contention handling during multi-process startup by avoiding lock-sensitive constructor PRAGMAs and applying a default SQLite lock wait policy.
+
+**Runtime**
+- Removed forced `PRAGMA journal_mode=DELETE` from `SqliteLayer` construction so layer initialization no longer attempts journal mode mutations on open (`src/sources/layers/sqlite.ts`).
+- Added default `PRAGMA busy_timeout=5000` initialization for Bun (`bun:sqlite`) and Node (`better-sqlite3`) SQLite adapters (`src/runtime/sqliteClient.ts`).
+- Kept SQLite CRUD/query/lock-store semantics unchanged beyond native SQLite busy timeout behavior.
+
+**Testing**
+- Added a SQLite layer regression test that holds an exclusive lock and verifies `SqliteLayer` construction succeeds without journal-mode startup mutation (`src/sources/layers/sqlite.unit.test.ts`).
+- Extended runtime adapter unit coverage to assert `busy_timeout` initialization on both Node and Bun SQLite adapter paths (`src/runtime/nodeAdapters.unit.test.ts`).
+
+**Docs**
+- Documented default SQLite busy timeout initialization and journal-mode preservation behavior in `README.md`.
+
 ## 1.3.1
 
 Fixes RN reference decode consistency so unresolved RN fields read from SQL layers are hydrated back to `RN` objects at runtime.

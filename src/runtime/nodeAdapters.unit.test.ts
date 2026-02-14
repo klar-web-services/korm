@@ -1,7 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
+import { createRequire as createNodeRequire } from "node:module";
 
 const uniqueSuffix = (): string =>
   `?test=${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+const fallbackRequire = createNodeRequire(import.meta.url);
 
 describe("runtime adapters (node path via module mocks)", () => {
   test("createPgClient uses postgres factory when Bun runtime is disabled", async () => {
@@ -13,7 +15,7 @@ describe("runtime adapters (node path via module mocks)", () => {
     mock.module("node:module", () => ({
       createRequire: () => {
         return (id: string) => {
-          if (id !== "postgres") throw new Error(`unexpected module: ${id}`);
+          if (id !== "postgres") return fallbackRequire(id);
           return (input?: unknown) => ({
             unsafe: async (query: string, values?: unknown[]) => ({
               query,
@@ -54,9 +56,7 @@ describe("runtime adapters (node path via module mocks)", () => {
     mock.module("node:module", () => ({
       createRequire: () => {
         return (id: string) => {
-          if (id !== "better-sqlite3") {
-            throw new Error(`unexpected module: ${id}`);
-          }
+          if (id !== "better-sqlite3") return fallbackRequire(id);
           return class FakeBetterSqlite {
             constructor(_path: string) {}
             prepare(sql: string) {
@@ -102,9 +102,81 @@ describe("runtime adapters (node path via module mocks)", () => {
       const iter = [...stmt.iterate<{ params: unknown[] }>([7])];
       client.close();
 
+      expect(calls[0]).toEqual({
+        type: "prepare",
+        payload: "PRAGMA busy_timeout=5000;",
+      });
+      expect(calls[1]).toEqual({ type: "run", payload: [] });
       expect(one?.params).toEqual([9]);
       expect(many[0]?.params).toEqual([8]);
       expect(iter[0]?.params).toEqual([7]);
+      expect(calls.some((entry) => entry.type === "close")).toBe(true);
+    } finally {
+      mock.restore();
+    }
+  });
+
+  test("createSqliteClient uses bun:sqlite adapter when Bun runtime is enabled", async () => {
+    const calls: Array<{ type: string; payload: unknown }> = [];
+    mock.module("./engine", () => ({
+      getBunGlobal: () => ({}),
+      isBunRuntime: () => true,
+      getRuntimeEngine: () => "bun",
+    }));
+    mock.module("node:module", () => ({
+      createRequire: () => {
+        return (id: string) => {
+          if (id !== "bun:sqlite") {
+            return fallbackRequire(id);
+          }
+          class FakeBunSqlite {
+            constructor(_path: string) {}
+            run(sql: string, params?: unknown): { changes: number } {
+              calls.push({ type: "run", payload: { sql, params } });
+              return { changes: 1 };
+            }
+            prepare(sql: string) {
+              calls.push({ type: "prepare", payload: sql });
+              return {
+                run: (...params: unknown[]) => {
+                  calls.push({ type: "stmt.run", payload: params });
+                  return { changes: 1 };
+                },
+                get: (...params: unknown[]) => {
+                  calls.push({ type: "stmt.get", payload: params });
+                  return { params };
+                },
+                all: (...params: unknown[]) => {
+                  calls.push({ type: "stmt.all", payload: params });
+                  return [{ params }];
+                },
+                *iterate(...params: unknown[]) {
+                  calls.push({ type: "stmt.iterate", payload: params });
+                  yield { params };
+                },
+              };
+            }
+            close(): void {
+              calls.push({ type: "close", payload: true });
+            }
+          }
+          return { Database: FakeBunSqlite };
+        };
+      },
+    }));
+
+    try {
+      const modPath = `./sqliteClient.ts${uniqueSuffix()}`;
+      const { createSqliteClient } =
+        (await import(modPath)) as typeof import("./sqliteClient");
+      const client = createSqliteClient("/tmp/mock.sqlite");
+      client.run("INSERT INTO t VALUES (?)", [1]);
+      client.close();
+
+      expect(calls[0]).toEqual({
+        type: "run",
+        payload: { sql: "PRAGMA busy_timeout=5000;", params: undefined },
+      });
       expect(calls.some((entry) => entry.type === "close")).toBe(true);
     } finally {
       mock.restore();
@@ -124,9 +196,7 @@ describe("runtime adapters (node path via module mocks)", () => {
     mock.module("node:module", () => ({
       createRequire: () => {
         return (id: string) => {
-          if (id !== "@aws-sdk/client-s3") {
-            throw new Error(`unexpected module: ${id}`);
-          }
+          if (id !== "@aws-sdk/client-s3") return fallbackRequire(id);
           class PutObjectCommand {
             params: Record<string, unknown>;
             constructor(params: Record<string, unknown>) {

@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { RN } from "../../core/rn";
 import { SqliteLayer } from "./sqlite";
 
@@ -23,6 +27,41 @@ function makeSqliteLayer(
 }
 
 describe("SqliteLayer helpers", () => {
+  test("constructor avoids lock-sensitive startup pragmas", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "korm-sqlite-lock-"));
+    const dbPath = path.join(root, "locked.sqlite");
+    const blocker = new Database(dbPath);
+    let layer: { close(): void } | undefined;
+    mock.module("../../runtime/engine", () => ({
+      getBunGlobal: () => ({}),
+      isBunRuntime: () => true,
+      getRuntimeEngine: () => "bun",
+    }));
+
+    try {
+      const modPath =
+        `./sqlite.ts?ctor=${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      const { SqliteLayer: SqliteLayerCtor } =
+        (await import(modPath)) as typeof import("./sqlite");
+      blocker.run(`CREATE TABLE IF NOT EXISTS "t" ("x" INTEGER)`);
+      blocker.run("BEGIN EXCLUSIVE");
+
+      expect(() => {
+        layer = new SqliteLayerCtor(dbPath);
+      }).not.toThrow();
+    } finally {
+      try {
+        layer?.close();
+      } catch {}
+      try {
+        blocker.run("ROLLBACK");
+      } catch {}
+      blocker.close();
+      await fs.rm(root, { recursive: true, force: true });
+      mock.restore();
+    }
+  });
+
   test("decode rehydrates RN column values", async () => {
     const layer = makeSqliteLayer() as any;
     const ownerRn = `[rn]:users:basic:${UUID}`;
