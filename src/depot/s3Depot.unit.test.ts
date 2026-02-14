@@ -1,6 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { RN } from "../core/rn";
-import { S3Depot } from "./depots/s3Depot";
 import { FloatingDepotFile } from "./depotFile";
 
 type S3ListResult = {
@@ -55,6 +54,9 @@ class FakeS3Client {
   }
 }
 
+const uniqueSuffix = (): string =>
+  `?test=${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
 function makeStream(text: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream({
@@ -67,11 +69,15 @@ function makeStream(text: string): ReadableStream<Uint8Array> {
 
 describe("S3Depot (mocked)", () => {
   test("writes, reads, lists, edits, and deletes files without network", async () => {
-    const bunAny = Bun as unknown as { S3Client: unknown };
-    const original = bunAny.S3Client;
-    bunAny.S3Client = FakeS3Client as unknown as typeof Bun.S3Client;
+    mock.module("../runtime/engine", () => ({
+      getBunGlobal: () => ({ S3Client: FakeS3Client }),
+      isBunRuntime: () => true,
+      getRuntimeEngine: () => "bun",
+    }));
 
     try {
+      const modPath = `./depots/s3Depot.ts${uniqueSuffix()}`;
+      const { S3Depot } = (await import(modPath)) as typeof import("./depots/s3Depot");
       const depot = new S3Depot({
         bucket: "unit-test",
         prefix: "root",
@@ -125,7 +131,7 @@ describe("S3Depot (mocked)", () => {
       const afterDelete = await depot.listFiles(prefix);
       expect(afterDelete.length).toBe(0);
     } finally {
-      bunAny.S3Client = original;
+      mock.restore();
     }
   });
 });
