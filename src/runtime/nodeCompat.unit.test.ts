@@ -10,25 +10,27 @@ describe("Node runtime compatibility", () => {
     expect(existsSync(distEntry)).toBe(true);
     const entryUrl = pathToFileURL(distEntry).href;
     const script = `
-      import(${JSON.stringify(entryUrl)})
-        .then(() => {
-          process.stdout.write("node-import-ok");
-        })
-        .catch((error) => {
-          const message = error instanceof Error ? error.stack ?? error.message : String(error);
-          process.stderr.write(message);
-          process.exit(1);
-        });
+      try {
+        await import(${JSON.stringify(entryUrl)});
+      } catch (error) {
+        const message = error instanceof Error ? error.stack ?? error.message : String(error);
+        process.stderr.write(message);
+        process.exit(1);
+      }
     `;
-    const result = spawnSync("node", ["-e", script], {
+    const result = spawnSync("node", ["--input-type=module", "-e", script], {
       encoding: "utf8",
       cwd: path.resolve(import.meta.dir, "../.."),
     });
+    if (result.error) {
+      throw new Error(
+        `Node failed to spawn for dist import check.\nerror:\n${String(result.error)}`,
+      );
+    }
     if (result.status !== 0) {
       throw new Error(
         `Node failed to import dist entrypoint.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
       );
     }
-    expect(result.stdout).toContain("node-import-ok");
   });
 });

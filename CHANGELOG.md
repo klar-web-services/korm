@@ -12,6 +12,7 @@ Hardens SQLite contention handling during multi-process startup by avoiding lock
 **Testing**
 - Added a SQLite layer regression test that holds an exclusive lock and verifies `SqliteLayer` construction succeeds without journal-mode startup mutation (`src/sources/layers/sqlite.unit.test.ts`).
 - Extended runtime adapter unit coverage to assert `busy_timeout` initialization on both Node and Bun SQLite adapter paths (`src/runtime/nodeAdapters.unit.test.ts`).
+- Stabilized Node dist-import compatibility test by asserting child spawn errors and relying on exit status instead of stdout text, avoiding false negatives from empty stdout capture (`src/runtime/nodeCompat.unit.test.ts`).
 
 **Docs**
 - Documented default SQLite busy timeout initialization and journal-mode preservation behavior in `README.md`.
