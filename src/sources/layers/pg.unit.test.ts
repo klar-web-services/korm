@@ -211,4 +211,39 @@ describe("PgLayer helpers", () => {
     expect(decoded.invalidRef).toBe(malformed);
     expect(decoded.note).toBe("ok");
   });
+
+  test("does not keep empty table info cache entries", async () => {
+    let unsafeCalls = 0;
+    const layer = makePgLayer({
+      _unsafe: async () => {
+        unsafeCalls += 1;
+        if (unsafeCalls === 1) return [];
+        return [{ name: "rnId", data_type: "text", udt_name: "text" }];
+      },
+    }) as any;
+
+    const first = await layer._getTableInfo("__items__users__basic");
+    expect(first).toEqual([]);
+
+    const second = await layer._getTableInfo("__items__users__basic");
+    expect(second).toEqual([
+      {
+        name: "rnId",
+        dataType: "text",
+        udtName: "text",
+        domainName: undefined,
+      },
+    ]);
+
+    const third = await layer._getTableInfo("__items__users__basic");
+    expect(third).toEqual([
+      {
+        name: "rnId",
+        dataType: "text",
+        udtName: "text",
+        domainName: undefined,
+      },
+    ]);
+    expect(unsafeCalls).toBe(2);
+  });
 });

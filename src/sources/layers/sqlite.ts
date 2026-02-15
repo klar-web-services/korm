@@ -539,12 +539,16 @@ export class SqliteLayer implements SourceLayer {
     opts: { force?: boolean } = {},
   ): { name: string; type: string }[] {
     const cached = this._tableInfoCache.get(rawTableName);
-    if (cached && !opts.force) return cached;
+    if (cached && cached.length > 0 && !opts.force) return cached;
     const tableName = this._quoteIdent(rawTableName);
     const info = this._db
       .prepare(`PRAGMA table_info(${tableName})`)
       .all<{ name: string; type: string }>();
-    this._tableInfoCache.set(rawTableName, info);
+    if (info.length > 0) {
+      this._tableInfoCache.set(rawTableName, info);
+    } else {
+      this._tableInfoCache.delete(rawTableName);
+    }
     return info;
   }
 

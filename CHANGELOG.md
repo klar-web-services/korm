@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.4.1
+
+Fixes cross-pool visibility regressions where an initial read against a missing collection could permanently hide later rows created by another pool/process.
+
+**Runtime**
+- Updated SQLite, Postgres, and MySQL table-info caching to avoid retaining empty metadata lookups, so missing-table probes are retried on subsequent reads (`src/sources/layers/{sqlite,pg,mysql}.ts`).
+- Preserved positive metadata caching and existing schema-change invalidation paths while removing sticky negative cache entries.
+- Restored expected behavior for both collection queries and direct RN reads when another pool creates the table after an initial miss.
+
+**Testing**
+- Added layer unit regressions for SQLite/Postgres/MySQL proving empty table-info results are not cached permanently and positive cache hits still work (`src/sources/layers/{sqlite,pg,mysql}.unit.test.ts`).
+- Added an integration regression that opens separate watcher/writer pools per backend, performs an initial empty read, inserts via writer, and verifies watcher sees both query and `from.rn(...)` reads afterward (`src/testing/integration.test.ts`).
+
 ## 1.4.0
 
 Redesigns query read options into a variadic helper API, adds built-in `first` and `sortBy` query options, and tightens option validation semantics.

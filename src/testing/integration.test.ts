@@ -708,6 +708,72 @@ describe("layers integration", () => {
     expect(sqliteTableExists(tname)).toBe(false);
   });
 
+  test("cross-pool readers observe collections after an initial miss", async () => {
+    const createIsolatedPool = (ident: LayerIdent): LayerPool => {
+      if (ident === "sqlite") {
+        const layer = korm.layers.sqlite(resolve(import.meta.dir, "test.sqlite"));
+        return korm.pool().setLayers(korm.use.layer(layer).as("isolated")).open();
+      }
+      if (ident === "pg") {
+        const layer = korm.layers.pg(process.env.TESTING_PG_URL!);
+        return korm.pool().setLayers(korm.use.layer(layer).as("isolated")).open();
+      }
+      const layer = korm.layers.mysql(process.env.TESTING_MYSQL_URL!);
+      return korm.pool().setLayers(korm.use.layer(layer).as("isolated")).open();
+    };
+
+    for (const ident of ["sqlite", "pg", "mysql"] as const) {
+      const names = makeNames(`crosspool${ident}`);
+      const label = `cross-pool-${ident}-${makeId("label")}`;
+      const collectionRn = korm.rn(`[rn]:${names.namespace}:${names.kind}:*`);
+      const watcherPool = createIsolatedPool(ident);
+      const writerPool = createIsolatedPool(ident);
+
+      try {
+        const watcherInitial = await korm
+          .item<SimpleRecord>(watcherPool)
+          .from.query(collectionRn)
+          .get();
+        expect(watcherInitial.isOk()).toBe(true);
+        expect(watcherInitial.unwrap().length).toBe(0);
+
+        const created = await korm
+          .item<SimpleRecord>(writerPool)
+          .from.data({
+            namespace: names.namespace,
+            kind: names.kind,
+            data: { label, score: 1 },
+          })
+          .create();
+        expect(created.isOk()).toBe(true);
+        const createdItem = created.unwrap();
+
+        const writerRows = await korm
+          .item<SimpleRecord>(writerPool)
+          .from.query(collectionRn)
+          .get();
+        expect(writerRows.isOk()).toBe(true);
+        expect(writerRows.unwrap().length).toBeGreaterThan(0);
+
+        const watcherRows = await korm
+          .item<SimpleRecord>(watcherPool)
+          .from.query(collectionRn)
+          .get();
+        expect(watcherRows.isOk()).toBe(true);
+        expect(watcherRows.unwrap().length).toBeGreaterThan(0);
+
+        const watcherByRn = await korm
+          .item<SimpleRecord>(watcherPool)
+          .from.rn(createdItem.rn!);
+        expect(watcherByRn.isOk()).toBe(true);
+        expect(watcherByRn.unwrap().data?.label).toBe(label);
+      } finally {
+        await writerPool.close().catch(() => undefined);
+        await watcherPool.close().catch(() => undefined);
+      }
+    }
+  });
+
   test("backups snapshot each layer and update schedule metadata", async () => {
     const root = mkdtempSync(resolve(os.tmpdir(), "korm-backups-"));
     const depotRoot = resolve(root, "depot");

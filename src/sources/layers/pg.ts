@@ -702,7 +702,7 @@ export class PgLayer implements SourceLayer {
     opts: { force?: boolean } = {},
   ): Promise<ColumnInfo[]> {
     const cached = this._tableInfoCache.get(rawTableName);
-    if (cached && !opts.force) return cached;
+    if (cached && cached.length > 0 && !opts.force) return cached;
     const result = await this._unsafe(
       `SELECT column_name as name, data_type as data_type, udt_name, domain_name
              FROM information_schema.columns
@@ -715,7 +715,11 @@ export class PgLayer implements SourceLayer {
       udtName: row.udt_name ?? row.udtName ?? undefined,
       domainName: row.domain_name ?? row.domainName ?? undefined,
     }));
-    this._tableInfoCache.set(rawTableName, info);
+    if (info.length > 0) {
+      this._tableInfoCache.set(rawTableName, info);
+    } else {
+      this._tableInfoCache.delete(rawTableName);
+    }
     return info;
   }
 

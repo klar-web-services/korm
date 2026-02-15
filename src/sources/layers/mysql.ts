@@ -694,7 +694,7 @@ export class MysqlLayer implements SourceLayer {
     opts: { force?: boolean } = {},
   ): Promise<ColumnInfo[]> {
     const cached = this._tableInfoCache.get(rawTableName);
-    if (cached && !opts.force) return cached;
+    if (cached && cached.length > 0 && !opts.force) return cached;
     const tableName = this._resolveTableName(rawTableName);
     const [rows] = await this._pool.query<RowDataPacket[]>(
       `
@@ -706,7 +706,11 @@ export class MysqlLayer implements SourceLayer {
       [tableName],
     );
     const info = rows as unknown as ColumnInfo[];
-    this._tableInfoCache.set(rawTableName, info);
+    if (info.length > 0) {
+      this._tableInfoCache.set(rawTableName, info);
+    } else {
+      this._tableInfoCache.delete(rawTableName);
+    }
     return info;
   }
 

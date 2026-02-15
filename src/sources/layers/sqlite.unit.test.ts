@@ -84,4 +84,31 @@ describe("SqliteLayer helpers", () => {
     expect(decoded.invalidRef).toBe(malformed);
     expect(decoded.note).toBe("ok");
   });
+
+  test("does not keep empty table info cache entries", () => {
+    let prepareCalls = 0;
+    const layer = makeSqliteLayer({
+      _db: {
+        run: () => {},
+        close: () => {},
+        prepare: () => ({
+          all: () => {
+            prepareCalls += 1;
+            if (prepareCalls === 1) return [];
+            return [{ name: "rnId", type: "ID_TEXT" }];
+          },
+        }),
+      },
+    }) as any;
+
+    const first = layer._getTableInfo("__items__users__basic");
+    expect(first).toEqual([]);
+
+    const second = layer._getTableInfo("__items__users__basic");
+    expect(second).toEqual([{ name: "rnId", type: "ID_TEXT" }]);
+
+    const third = layer._getTableInfo("__items__users__basic");
+    expect(third).toEqual([{ name: "rnId", type: "ID_TEXT" }]);
+    expect(prepareCalls).toBe(2);
+  });
 });

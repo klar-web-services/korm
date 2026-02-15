@@ -196,4 +196,32 @@ describe("MysqlLayer helpers", () => {
     expect(decoded.invalidRef).toBe(malformed);
     expect(decoded.note).toBe("ok");
   });
+
+  test("does not keep empty table info cache entries", async () => {
+    let queryCalls = 0;
+    const layer = makeMysqlLayer({
+      _pool: {
+        query: async () => {
+          queryCalls += 1;
+          if (queryCalls === 1) return [[], {}];
+          return [[{ name: "rnId", type: "varchar", column_type: "varchar(255)" }], {}];
+        },
+        end: async () => {},
+      },
+    }) as any;
+
+    const first = await layer._getTableInfo("__items__users__basic");
+    expect(first).toEqual([]);
+
+    const second = await layer._getTableInfo("__items__users__basic");
+    expect(second).toEqual([
+      { name: "rnId", type: "varchar", column_type: "varchar(255)" },
+    ]);
+
+    const third = await layer._getTableInfo("__items__users__basic");
+    expect(third).toEqual([
+      { name: "rnId", type: "varchar", column_type: "varchar(255)" },
+    ]);
+    expect(queryCalls).toBe(2);
+  });
 });
