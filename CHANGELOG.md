@@ -22,6 +22,19 @@ Redesigns query read options into a variadic helper API, adds built-in `first` a
 
 **Docs**
 - Updated README query examples and API reference to the new variadic helper model and documented `first`/`sortBy` semantics (`README.md`).
+- Updated `examples/minimal.example.ts` and `examples/maximal.example.ts` to demonstrate variadic query options, including `sortBy`, `first`, and strict missing-reference reads.
+
+**Migration Guide (1.4.0)**
+- Replace object options with variadic helper options:
+  - Before: `query.get({ resolvePaths: ["owner"], allowMissing: false })`
+  - After: `query.get(korm.resolve("owner"), korm.disallowMissingReferences())`
+- Replace manual "first row" workarounds with built-in helpers:
+  - Before: `const rows = (await query.get()).unwrap(); const one = rows[0];`
+  - After: `const one = (await query.get(korm.first())).unwrap();`
+- Replace manual sorting and ad-hoc typing workarounds with `korm.sortBy(...)`:
+  - Before: `const rows = (await query.get()).unwrap().sort(customCompare) as MyType[];`
+  - After: `const rows = (await query.get(korm.sortBy("owner.name", "asc"))).unwrap();`
+- `first()` / `first(1)` now returns a single item result (and errors when no rows match), so previous custom wrappers for single-result typing can be removed.
 
 ## 1.3.2
 

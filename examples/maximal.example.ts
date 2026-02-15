@@ -251,7 +251,7 @@ const fredsCars = (
     .where(
       eq("owner.username", "freddieFlinny_69_420"), // Owner is an RN reference but korm will automatically resolve it for the query!
     )
-    .get()
+    .get(korm.sortBy("year", "desc"))
 ).unwrap();
 
 console.log("One of Fred's cars:");
@@ -293,8 +293,8 @@ const fredRN = (
     .item<User>(pool)
     .from.query(korm.rn("[rn][from::userdb]:users:freetier:*"))
     .where(eq("username", "freddieFlinny_69_420"))
-    .get()
-).unwrap()[0]!.rn!;
+    .get(korm.first())
+).unwrap().rn!;
 
 type UserWarning = {
   user: korm.types.RN<User>;
@@ -348,9 +348,9 @@ const theCar = (
     .item<Car>(pool)
     .from.query(korm.rn("[rn][from::cardb]:cars:suv:*"))
     .where(eq("make", "Citroen"))
-    .get(korm.resolve("owner"))
+    .get(korm.resolve("owner"), korm.sortBy("year", "desc"), korm.first())
 ) // This path will be resolved across layers
-  .unwrap()[0]!;
+  .unwrap();
 
 // theCar now has type T (Car) extended with the resolved path's type (User), allowing us to type-safe access the resolved data.
 
@@ -373,6 +373,7 @@ const theCarAgain = (
   await korm.item<Car>(pool).from.rn(
     committedCar.rn!,
     korm.resolve("owner"), // Like a JOIN across databases!
+    korm.disallowMissingReferences(),
   )
 ).unwrap();
 
@@ -414,7 +415,13 @@ const newInvoice = (
 ).unwrap();
 
 const invoiceWithFile = (
-  await korm.item<Invoice>(pool).from.rn(newInvoice.rn!, korm.resolve("pdf"))
+  await korm
+    .item<Invoice>(pool)
+    .from.rn(
+      newInvoice.rn!,
+      korm.resolve("pdf"),
+      korm.disallowMissingReferences(),
+    )
 ).unwrap();
 
 console.log("Invoice file contents:");

@@ -52,12 +52,21 @@ const cars = (
     // No `from` mod needed with a single layer.
     .from.query(korm.rn("[rn]:cars:suv:*"))
     .where(eq("make", "Citroen"))
-    .get()
+    .get(korm.sortBy("model", "asc"))
+).unwrap();
+
+const firstCar = (
+  await korm
+    .item<Car>(pool)
+    .from.query(korm.rn("[rn]:cars:suv:*"))
+    .where(eq("make", "Citroen"))
+    .get(korm.sortBy("model", "asc"), korm.first())
 ).unwrap();
 
 const updatedCar = (await car.update({ model: "C5" }).commit()).unwrap();
 
 console.log(cars.map((item) => item.show({ color: true })).join("\n"));
+console.log(firstCar.show({ color: true }));
 console.log(updatedCar.show({ color: true }));
 
 const deletedCar = (await updatedCar.delete()).unwrap();
