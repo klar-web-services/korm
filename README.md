@@ -300,6 +300,8 @@ const cars = (await korm.item<Car>(pool)
 cars[0]?.data?.owner.firstName; // owner is typed as User
 ```
 
+To fail fast on missing references, add `korm.disallowMissingReferences()` to `get(...)` or `from.rn(...)`.
+
 Supported patterns:
 
 - `owner` (resolve a single reference)
@@ -308,6 +310,32 @@ Supported patterns:
 - `owner.addresses[*].city` (resolve all array entries)
 
 If you don't call `korm.resolve(...)` but query a nested RN path (e.g. `owner.username`), korm will automatically resolve just enough to filter safely. It groups RN lookups by layer to keep the number of DB round trips small.
+
+### Sorting and first
+
+`get(...)` accepts composable option helpers:
+
+```ts
+const firstCar = (
+  await korm.item<Car>(pool)
+    .from.query(korm.rn("[rn][from::cardb]:cars:suv:*"))
+    .get(
+      korm.sortBy("owner.firstName", "asc"),
+      korm.first(),
+      korm.resolve("owner"),
+    )
+).unwrap();
+```
+
+- `korm.first()` / `korm.first(n)`:
+  - `first()` and `first(1)` return a single item and error if no match.
+  - `first(n > 1)` returns an array with up to `n` items.
+- `korm.sortBy(key, direction?, { allowStringify? })`:
+  - Works with or without `first(...)`.
+  - Supports nested RN paths (auto-resolves as needed).
+  - Null/undefined placement is direction-based (asc => last, desc => first).
+  - Wildcards are not allowed in sort paths.
+  - Non-scalar sort values error unless `allowStringify: true`.
 
 For unresolved RN columns, returned item data keeps RN values as `korm.types.RN<T>` objects, so calling `.value()` is safe on those fields. korm still persists references as RN strings in the underlying SQL rows.
 
@@ -639,6 +667,9 @@ Types referenced below live under `korm.types` (for example, `korm.types.RN`).
 - `korm.layers.sqlite(path)` / `pg(urlOrOptions)` / `mysql(...)`
 - `korm.qfns` -> `{ eq, and, or, not, gt, gte, lt, lte, like, inList }`
 - `korm.resolve(...paths)` -> resolve options helper for query and `from.rn(...)`
+- `korm.first(n?)` -> first-result helper for query reads
+- `korm.sortBy(key, direction?, options?)` -> sort helper for query reads
+- `korm.disallowMissingReferences()` -> strict missing-reference helper
 - `korm.encrypt(value)` / `korm.password(value)`
 - `korm.tx(...items)` -> Tx builder
 - `korm.pool()` -> Pool builder (`setLayers`, `setDepots`, `withMeta`, `withLocks`, `withWal`, `backups`, `open`)
@@ -681,8 +712,8 @@ Types referenced below live under `korm.types` (for example, `korm.types.RN`).
 
 ### Query
 
-- `from.query(rn).where(component).get({ ...korm.resolve(...paths), allowMissing })`
-- `from.rn(rn, { ...korm.resolve(...paths), allowMissing })`
+- `from.query(rn).where(component).get(...options)`
+- `from.rn(rn, ...options)` (`korm.resolve(...)` and `korm.disallowMissingReferences()` only)
 
 ### Depots
 

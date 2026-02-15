@@ -49,23 +49,80 @@ export type _QueryComponent =
     }
   | _QueryComparison;
 
-/**
- * Options for `QueryBuilder.get(...)`.
- */
-export type GetOpts<Paths extends readonly string[] = readonly string[]> = {
-  /**
-   * RN paths to resolve into full objects before returning.
-   * Example: `["owner", "owner.addresses[*].city"]`.
-   * Default: none (no manual resolution).
-   */
-  resolvePaths?: Paths;
-  /**
-   * Whether missing RN references are allowed during resolution.
-   * When false, missing references return an error.
-   * Default: true.
-   */
-  allowMissing?: boolean;
+/** Resolve RN paths into full objects before returning. */
+export type ResolveGetOption<Paths extends readonly string[] = readonly string[]> = {
+  type: "resolve";
+  paths: Paths;
 };
+
+/** Keep only the first `n` rows after filtering/sorting. */
+export type FirstGetOption<N extends number = number> = {
+  type: "first";
+  n: N;
+};
+
+/** Sorting direction for `sortBy` query options. */
+export type SortDirection = "asc" | "desc";
+
+/** Sort query results by a path in item data. */
+export type SortByGetOption = {
+  type: "sortBy";
+  key: string;
+  direction?: SortDirection;
+  allowStringify?: boolean;
+};
+
+/** Fail when a resolved RN reference is missing. */
+export type DisallowMissingReferencesGetOption = {
+  type: "disallowMissingReferences";
+};
+
+/** All options supported by `QueryBuilder.get(...)`. */
+export type QueryGetOption =
+  | ResolveGetOption
+  | FirstGetOption
+  | SortByGetOption
+  | DisallowMissingReferencesGetOption;
+
+/** Options supported by `from.rn(...)`. */
+export type RnGetOption =
+  | ResolveGetOption
+  | DisallowMissingReferencesGetOption;
+
+type ResolvePathsFromOptions<Options extends readonly unknown[]> =
+  Options extends readonly [infer Head, ...infer Tail]
+    ? Head extends ResolveGetOption<infer Paths extends readonly string[]>
+      ? Paths
+      : ResolvePathsFromOptions<Tail>
+    : [];
+
+type FirstCountFromOptions<Options extends readonly unknown[]> =
+  Options extends readonly [infer Head, ...infer Tail]
+    ? Head extends FirstGetOption<infer N extends number>
+      ? N
+      : FirstCountFromOptions<Tail>
+    : never;
+
+/** Extract resolved paths from variadic get options. */
+export type GetOptionResolvePaths<Options extends readonly unknown[]> =
+  ResolvePathsFromOptions<Options>;
+
+type QueryItemFromOptions<
+  T extends JSONable,
+  Options extends readonly unknown[],
+> = Item<ResolvePaths<T, ResolvePathsFromOptions<Options>>>;
+
+/** Resolved data shape returned by `QueryBuilder.get(...)` for a given option tuple. */
+export type QueryGetResultData<
+  T extends JSONable,
+  Options extends readonly QueryGetOption[],
+> = [FirstCountFromOptions<Options>] extends [never]
+  ? QueryItemFromOptions<T, Options>[]
+  : number extends FirstCountFromOptions<Options>
+    ? QueryItemFromOptions<T, Options> | QueryItemFromOptions<T, Options>[]
+    : FirstCountFromOptions<Options> extends 1
+      ? QueryItemFromOptions<T, Options>
+      : QueryItemFromOptions<T, Options>[];
 
 type IsTuple<T extends readonly unknown[]> = number extends T["length"]
   ? false
@@ -198,11 +255,22 @@ export class QueryBuilder<T extends JSONable> {
    * Execute the query and return matching items.
    * Use `korm.resolve(...)` to materialize RN references in the returned data.
    */
-  async get<const Paths extends readonly string[] = []>(
-    options?: GetOpts<Paths>,
-  ): Promise<Result<Item<ResolvePaths<T, Paths>>[]>> {
-    const resolvePaths = (options?.resolvePaths ?? []) as Paths;
-    const allowMissing = options?.allowMissing ?? true;
+  async get<const Options extends readonly QueryGetOption[] = []>(
+    ...options: Options
+  ): Promise<Result<QueryGetResultData<T, Options>>> {
+    type OutputItem = Item<ResolvePaths<T, GetOptionResolvePaths<Options>>>;
+
+    const normalizedResult = normalizeGetOptions(options, "query");
+    if (normalizedResult.isErr()) {
+      return new Result({
+        success: false,
+        error: normalizedResult.error,
+      });
+    }
+    const normalized = normalizedResult.unwrap();
+    const resolvePaths = normalized.resolvePaths;
+    const allowMissing = normalized.allowMissing;
+
     const pool = this._futureItem.pool;
     await pool.ensureWalReady();
     const layer = pool.findLayerForRn(this.rn);
@@ -250,49 +318,41 @@ export class QueryBuilder<T extends JSONable> {
     const baseResult = await layer.executeQuery<T>(queryForDb);
 
     if (baseResult.isErr()) {
-      return baseResult as Result<Item<ResolvePaths<T, Paths>>[]>;
+      return baseResult as Result<QueryGetResultData<T, Options>>;
     }
 
     const baseItems = baseResult.unwrap();
+    let output: OutputItem[];
 
     if (resolvePaths.length > 0) {
       const resolved = await resolveItems(baseItems, resolvePaths, pool, {
         allowMissing,
       });
       if (resolved.isErr()) {
-        return resolved as Result<Item<ResolvePaths<T, Paths>>[]>;
+        return resolved as Result<QueryGetResultData<T, Options>>;
       }
-      if (!root) {
-        return resolved as Result<Item<ResolvePaths<T, Paths>>[]>;
+      if (!root || !needsInMemoryFilter) {
+        output = resolved.unwrap() as OutputItem[];
+      } else {
+        const filtered = filterItemsByQuery(
+          resolved.unwrap() as Item<ResolvePaths<T, GetOptionResolvePaths<Options>>>[],
+          root,
+        );
+        output = filtered as OutputItem[];
       }
-      if (!needsInMemoryFilter) {
-        return resolved as Result<Item<ResolvePaths<T, Paths>>[]>;
-      }
-      const filtered = filterItemsByQuery(
-        resolved.unwrap() as Item<ResolvePaths<T, Paths>>[],
-        root,
-      );
-      return new Result({ success: true, data: filtered });
-    }
-
-    if (!root) {
-      return baseResult as Result<Item<ResolvePaths<T, Paths>>[]>;
-    }
-    if (!needsInMemoryFilter) {
-      return baseResult as Result<Item<ResolvePaths<T, Paths>>[]>;
-    }
-
-    if (shouldAutoResolve) {
+    } else if (!root || !needsInMemoryFilter) {
+      output = baseItems as OutputItem[];
+    } else if (shouldAutoResolve) {
       const clones = cloneItemsForFilter(baseItems);
       const resolved = await resolveItems(clones, autoResolvePaths, pool, {
         allowMissing: true,
         projection: "auto",
       });
       if (resolved.isErr()) {
-        return resolved as Result<Item<ResolvePaths<T, Paths>>[]>;
+        return resolved as Result<QueryGetResultData<T, Options>>;
       }
       const filtered = filterItemsByQuery(
-        resolved.unwrap() as Item<ResolvePaths<T, Paths>>[],
+        resolved.unwrap() as Item<ResolvePaths<T, GetOptionResolvePaths<Options>>>[],
         root,
       );
       const matched = new Set(
@@ -300,20 +360,63 @@ export class QueryBuilder<T extends JSONable> {
           .map((item) => item.rn?.value())
           .filter((value): value is string => Boolean(value)),
       );
-      const output = baseItems.filter(
+      output = baseItems.filter(
         (item) => item.rn && matched.has(item.rn.value()),
+      ) as OutputItem[];
+    } else {
+      const filtered = filterItemsByQuery(
+        baseItems as Item<ResolvePaths<T, GetOptionResolvePaths<Options>>>[],
+        root,
       );
+      output = filtered as OutputItem[];
+    }
+
+    if (normalized.sortBy) {
+      const sortClones = cloneItemsForFilter(output as Item<JSONable>[]);
+      const sortResolved = await resolveItems(
+        sortClones,
+        [normalized.sortBy.key] as const,
+        pool,
+        { allowMissing },
+      );
+      if (sortResolved.isErr()) {
+        return sortResolved as Result<QueryGetResultData<T, Options>>;
+      }
+      const sorted = sortItemsByOption(
+        output,
+        sortResolved.unwrap() as Item<JSONable>[],
+        normalized.sortBy,
+      );
+      if (sorted.isErr()) {
+        return sorted as Result<QueryGetResultData<T, Options>>;
+      }
+      output = sorted.unwrap();
+    }
+
+    if (normalized.firstN === undefined) {
       return new Result({
         success: true,
-        data: output as Item<ResolvePaths<T, Paths>>[],
+        data: output as QueryGetResultData<T, Options>,
       });
     }
 
-    const filtered = filterItemsByQuery(
-      baseItems as Item<ResolvePaths<T, Paths>>[],
-      root,
-    );
-    return new Result({ success: true, data: filtered });
+    if (normalized.firstN === 1) {
+      if (output.length === 0) {
+        return new Result({
+          success: false,
+          error: new Error("first(1) expected one item but query returned 0."),
+        });
+      }
+      return new Result({
+        success: true,
+        data: output[0] as QueryGetResultData<T, Options>,
+      });
+    }
+
+    return new Result({
+      success: true,
+      data: output.slice(0, normalized.firstN) as QueryGetResultData<T, Options>,
+    });
   }
 
   /**
@@ -398,6 +501,20 @@ type PathSegment =
   | { kind: "wildcard" }
   | { kind: "index"; index: number }
   | { kind: "indexWildcard" };
+
+type NormalizedSortBy = {
+  key: string;
+  direction: SortDirection;
+  allowStringify: boolean;
+  parsedPath: PathSegment[];
+};
+
+type NormalizedGetOptions = {
+  resolvePaths: string[];
+  allowMissing: boolean;
+  firstN?: number;
+  sortBy?: NormalizedSortBy;
+};
 
 type Setter = (value: unknown) => void;
 
@@ -519,6 +636,161 @@ function parseResolvePath(path: string): PathSegment[] {
   }
 
   return segments;
+}
+
+function parseSortPath(path: string): PathSegment[] {
+  const segments = parseResolvePath(path);
+  for (const segment of segments) {
+    if (segment.kind === "wildcard" || segment.kind === "indexWildcard") {
+      throw new Error(
+        `Invalid sort path "${path}": wildcards are not allowed.`,
+      );
+    }
+  }
+  return segments;
+}
+
+/**
+ * Normalize and validate variadic options passed to query reads.
+ * @internal
+ */
+export function normalizeGetOptions(
+  options: readonly unknown[],
+  mode: "query" | "rn" = "query",
+): Result<NormalizedGetOptions> {
+  try {
+    const seen = new Set<string>();
+    let resolvePaths: string[] = [];
+    let allowMissing = true;
+    let firstN: number | undefined;
+    let sortBy: NormalizedSortBy | undefined;
+
+    for (const option of options) {
+      if (!isRecord(option)) {
+        throw new Error("Invalid get option: expected an object.");
+      }
+      const type = option.type;
+      if (typeof type !== "string" || type.length === 0) {
+        throw new Error("Invalid get option: missing \"type\".");
+      }
+      if (seen.has(type)) {
+        throw new Error(`Duplicate get option "${type}" is not allowed.`);
+      }
+      seen.add(type);
+
+      if (type === "resolve") {
+        const rawPaths = (option as { paths?: unknown }).paths;
+        const input = Array.isArray(rawPaths)
+          ? rawPaths
+          : typeof rawPaths === "string"
+            ? [rawPaths]
+            : null;
+        if (!input) {
+          throw new Error(
+            'Invalid "resolve" option: expected "paths" to be a string or string array.',
+          );
+        }
+        const nextPaths: string[] = [];
+        for (const entry of input) {
+          if (typeof entry !== "string") {
+            throw new Error(
+              'Invalid "resolve" option: every path must be a string.',
+            );
+          }
+          const trimmed = entry.trim();
+          if (trimmed.length === 0) {
+            throw new Error(
+              'Invalid "resolve" option: paths cannot include empty strings.',
+            );
+          }
+          nextPaths.push(trimmed);
+        }
+        resolvePaths = nextPaths;
+        continue;
+      }
+
+      if (type === "disallowMissingReferences") {
+        allowMissing = false;
+        continue;
+      }
+
+      if (type === "first") {
+        if (mode === "rn") {
+          throw new Error(
+            'Get option "first" is not supported for from.rn(...).',
+          );
+        }
+        const n = (option as { n?: unknown }).n;
+        if (
+          typeof n !== "number" ||
+          !Number.isFinite(n) ||
+          !Number.isInteger(n) ||
+          n <= 0
+        ) {
+          throw new Error(
+            'Invalid "first" option: "n" must be a positive integer.',
+          );
+        }
+        firstN = n;
+        continue;
+      }
+
+      if (type === "sortBy") {
+        if (mode === "rn") {
+          throw new Error(
+            'Get option "sortBy" is not supported for from.rn(...).',
+          );
+        }
+        const key = (option as { key?: unknown }).key;
+        if (typeof key !== "string" || key.trim().length === 0) {
+          throw new Error('Invalid "sortBy" option: "key" must be a string.');
+        }
+        const directionRaw = (option as { direction?: unknown }).direction;
+        const direction: SortDirection =
+          directionRaw === undefined ? "asc" : (directionRaw as SortDirection);
+        if (direction !== "asc" && direction !== "desc") {
+          throw new Error(
+            'Invalid "sortBy" option: "direction" must be "asc" or "desc".',
+          );
+        }
+        const allowStringifyRaw = (option as { allowStringify?: unknown })
+          .allowStringify;
+        if (
+          allowStringifyRaw !== undefined &&
+          typeof allowStringifyRaw !== "boolean"
+        ) {
+          throw new Error(
+            'Invalid "sortBy" option: "allowStringify" must be a boolean.',
+          );
+        }
+        const keyTrimmed = key.trim();
+        sortBy = {
+          key: keyTrimmed,
+          direction,
+          allowStringify: allowStringifyRaw === true,
+          parsedPath: parseSortPath(keyTrimmed),
+        };
+        continue;
+      }
+
+      throw new Error(`Unknown get option "${type}".`);
+    }
+
+    return new Result({
+      success: true,
+      data: {
+        resolvePaths,
+        allowMissing,
+        firstN,
+        sortBy,
+      },
+    });
+  } catch (error) {
+    return new Result({
+      success: false,
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+  }
 }
 
 function parseQueryPath(path: string): PathSegment[] {
@@ -962,6 +1234,142 @@ function normalizeComparable(value: unknown): unknown {
     return (value as { value: () => string }).value();
   }
   return value;
+}
+
+type SortComparable =
+  | { missing: true; value?: undefined }
+  | { missing: false; value: string | number | boolean };
+
+function normalizeSortComparable(
+  value: unknown,
+  sortBy: NormalizedSortBy,
+): Result<SortComparable> {
+  const normalized = normalizeComparable(value);
+  if (normalized === null || normalized === undefined) {
+    return new Result({ success: true, data: { missing: true } });
+  }
+  if (
+    typeof normalized === "string" ||
+    typeof normalized === "number" ||
+    typeof normalized === "boolean"
+  ) {
+    return new Result({ success: true, data: { missing: false, value: normalized } });
+  }
+  if (sortBy.allowStringify) {
+    let stringValue: string;
+    try {
+      const encoded = JSON.stringify(normalized);
+      stringValue = encoded === undefined ? String(normalized) : encoded;
+    } catch {
+      stringValue = String(normalized);
+    }
+    return new Result({ success: true, data: { missing: false, value: stringValue } });
+  }
+  return new Result({
+    success: false,
+    error: new Error(
+      `Sort path "${sortBy.key}" resolved to a non-scalar value. Use allowStringify to permit this.`,
+    ),
+  });
+}
+
+function readSortComparable(
+  data: JSONable | undefined,
+  sortBy: NormalizedSortBy,
+): Result<SortComparable> {
+  if (data === undefined) {
+    return new Result({ success: true, data: { missing: true } });
+  }
+  const values = collectValuesAtPath(data, sortBy.parsedPath);
+  if (values.length === 0) {
+    return new Result({ success: true, data: { missing: true } });
+  }
+  return normalizeSortComparable(values[0], sortBy);
+}
+
+function compareSortPrimitives(
+  left: string | number | boolean,
+  right: string | number | boolean,
+): number {
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+  if (typeof left === "boolean" && typeof right === "boolean") {
+    return Number(left) - Number(right);
+  }
+  if (typeof left === "string" && typeof right === "string") {
+    return left.localeCompare(right);
+  }
+  return String(left).localeCompare(String(right));
+}
+
+function compareSortValues(
+  left: SortComparable,
+  right: SortComparable,
+  direction: SortDirection,
+): number {
+  if (left.missing && right.missing) return 0;
+  if (left.missing) return direction === "asc" ? 1 : -1;
+  if (right.missing) return direction === "asc" ? -1 : 1;
+
+  const compared = compareSortPrimitives(left.value, right.value);
+  return direction === "asc" ? compared : -compared;
+}
+
+function sortItemsByOption<T extends JSONable>(
+  baseItems: Item<T>[],
+  resolvedItems: Item<JSONable>[],
+  sortBy: NormalizedSortBy,
+): Result<Item<T>[]> {
+  try {
+    if (baseItems.length !== resolvedItems.length) {
+      throw new Error(
+        `Sort preparation mismatch: expected ${baseItems.length} items but got ${resolvedItems.length}.`,
+      );
+    }
+
+    const decorated: {
+      item: Item<T>;
+      index: number;
+      comparable: SortComparable;
+    }[] = [];
+
+    for (let index = 0; index < baseItems.length; index += 1) {
+      const item = baseItems[index]!;
+      const resolved = resolvedItems[index];
+      const comparableResult = readSortComparable(
+        resolved?.data as JSONable | undefined,
+        sortBy,
+      );
+      if (comparableResult.isErr()) {
+        return new Result({
+          success: false,
+          error: comparableResult.error,
+        });
+      }
+      decorated.push({
+        item,
+        index,
+        comparable: comparableResult.unwrap(),
+      });
+    }
+
+    decorated.sort((a, b) => {
+      const cmp = compareSortValues(a.comparable, b.comparable, sortBy.direction);
+      if (cmp !== 0) return cmp;
+      return a.index - b.index;
+    });
+
+    return new Result({
+      success: true,
+      data: decorated.map((entry) => entry.item),
+    });
+  } catch (error) {
+    return new Result({
+      success: false,
+      error: error instanceof Error ? error : new Error(String(error)),
+    });
+  }
 }
 
 function compareValues(

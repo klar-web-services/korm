@@ -74,11 +74,20 @@ type Car = {
 };
 type Registration = { carRef: string; active: boolean; note: string };
 type SimpleRecord = { label: string; score: number };
+type SortRecord = {
+  label: string;
+  score?: number;
+  meta: { bucket: string };
+};
 type ArrayRecord = {
   name: string;
   tags: string[];
   meta: { rating: number; addresses: { city: string; zip: number }[] };
   matrix: number[][];
+};
+type OwnerSortRecord = {
+  label: string;
+  owner: RN<User>;
 };
 type MissingRefRecord = { label: string; owner: string };
 type GroupRecord = {
@@ -1587,6 +1596,186 @@ describe("layers integration", () => {
     });
   }
 
+  test("first() and first(n) return the expected shapes", async () => {
+    const names = makeNames("firstopts");
+    await createItem<SimpleRecord>("sqlite", names.namespace, names.kind, {
+      label: "two",
+      score: 2,
+    });
+    await createItem<SimpleRecord>("sqlite", names.namespace, names.kind, {
+      label: "one",
+      score: 1,
+    });
+
+    const queryRn = korm.rn(
+      `[rn][from::sqlite]:${names.namespace}:${names.kind}:*`,
+    );
+
+    const firstRes = await korm
+      .item<SimpleRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("score", "asc"), korm.first());
+    expect(firstRes.isOk()).toBe(true);
+    expect(firstRes.unwrap().data?.score).toBe(1);
+
+    const firstThreeRes = await korm
+      .item<SimpleRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("score", "asc"), korm.first(3));
+    expect(firstThreeRes.isOk()).toBe(true);
+    expect(firstThreeRes.unwrap().map((item) => item.data?.score)).toEqual([
+      1, 2,
+    ]);
+
+    const emptyFirstRes = await korm
+      .item<SimpleRecord>(layerPool)
+      .from.query(queryRn)
+      .where(eq("label", "__missing__"))
+      .get(korm.first());
+    expect(emptyFirstRes.isErr()).toBe(true);
+
+    const emptyFirstThreeRes = await korm
+      .item<SimpleRecord>(layerPool)
+      .from.query(queryRn)
+      .where(eq("label", "__missing__"))
+      .get(korm.first(3));
+    expect(emptyFirstThreeRes.isOk()).toBe(true);
+    expect(emptyFirstThreeRes.unwrap()).toHaveLength(0);
+  });
+
+  test("sortBy works without first and validates scalar behavior", async () => {
+    const names = makeNames("sortopts");
+    await createItem<SortRecord>("sqlite", names.namespace, names.kind, {
+      label: "two",
+      score: 2,
+      meta: { bucket: "b" },
+    });
+    await createItem<SortRecord>("sqlite", names.namespace, names.kind, {
+      label: "missing",
+      meta: { bucket: "a" },
+    });
+    await createItem<SortRecord>("sqlite", names.namespace, names.kind, {
+      label: "one",
+      score: 1,
+      meta: { bucket: "c" },
+    });
+
+    const queryRn = korm.rn(
+      `[rn][from::sqlite]:${names.namespace}:${names.kind}:*`,
+    );
+
+    const ascRes = await korm
+      .item<SortRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("score", "asc"));
+    expect(ascRes.isOk()).toBe(true);
+    expect(ascRes.unwrap().map((item) => item.data?.label)).toEqual([
+      "one",
+      "two",
+      "missing",
+    ]);
+
+    const descRes = await korm
+      .item<SortRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("score", "desc"));
+    expect(descRes.isOk()).toBe(true);
+    expect(descRes.unwrap().map((item) => item.data?.label)).toEqual([
+      "missing",
+      "two",
+      "one",
+    ]);
+
+    const nonScalarRes = await korm
+      .item<SortRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("meta"));
+    expect(nonScalarRes.isErr()).toBe(true);
+
+    const stringifyRes = await korm
+      .item<SortRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("meta", "asc", { allowStringify: true }));
+    expect(stringifyRes.isOk()).toBe(true);
+    expect(stringifyRes.unwrap().map((item) => item.data?.label)).toEqual([
+      "missing",
+      "two",
+      "one",
+    ]);
+  });
+
+  test("sortBy resolves nested RN paths and respects missing-reference mode", async () => {
+    const userNames = makeNames("sortusers");
+    const ownerNames = makeNames("sortowners");
+
+    const ada = await createItem<User>("sqlite", userNames.namespace, userNames.kind, {
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+    const bob = await createItem<User>("sqlite", userNames.namespace, userNames.kind, {
+      firstName: "Bob",
+      lastName: "Builder",
+    });
+
+    const missingOwner = korm.rn(
+      `[rn][from::sqlite]:${userNames.namespace}:${userNames.kind}:${randomUUID()}`,
+    );
+
+    await createItem<OwnerSortRecord>(
+      "sqlite",
+      ownerNames.namespace,
+      ownerNames.kind,
+      { label: "bob-car", owner: bob.rn! },
+    );
+    await createItem<OwnerSortRecord>(
+      "sqlite",
+      ownerNames.namespace,
+      ownerNames.kind,
+      { label: "missing-car", owner: missingOwner },
+    );
+    await createItem<OwnerSortRecord>(
+      "sqlite",
+      ownerNames.namespace,
+      ownerNames.kind,
+      { label: "ada-car", owner: ada.rn! },
+    );
+
+    const queryRn = korm.rn(
+      `[rn][from::sqlite]:${ownerNames.namespace}:${ownerNames.kind}:*`,
+    );
+
+    const ascRes = await korm
+      .item<OwnerSortRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("owner.firstName", "asc"));
+    expect(ascRes.isOk()).toBe(true);
+    expect(ascRes.unwrap().map((item) => item.data?.label)).toEqual([
+      "ada-car",
+      "bob-car",
+      "missing-car",
+    ]);
+
+    const descRes = await korm
+      .item<OwnerSortRecord>(layerPool)
+      .from.query(queryRn)
+      .get(korm.sortBy("owner.firstName", "desc"));
+    expect(descRes.isOk()).toBe(true);
+    expect(descRes.unwrap().map((item) => item.data?.label)).toEqual([
+      "missing-car",
+      "bob-car",
+      "ada-car",
+    ]);
+
+    const strictRes = await korm
+      .item<OwnerSortRecord>(layerPool)
+      .from.query(queryRn)
+      .get(
+        korm.sortBy("owner.firstName", "asc"),
+        korm.disallowMissingReferences(),
+      );
+    expect(strictRes.isErr()).toBe(true);
+  });
+
   test("resolvePaths respects allowMissing option", async () => {
     const names = makeNames("missingresolve");
     const userNames = makeNames("missingresolveuser");
@@ -1607,14 +1796,18 @@ describe("layers integration", () => {
 
     const allowMissingRes = await korm
       .item<MissingRefRecord>(layerPool)
-      .from.rn(created.rn!, { resolvePaths: ["owner"] });
+      .from.rn(created.rn!, korm.resolve("owner"));
     expect(allowMissingRes.isOk()).toBe(true);
     const allowMissingItem = allowMissingRes.unwrap();
     expect(allowMissingItem.data?.owner).toBe(missingRn.value());
 
     const strictRes = await korm
       .item<MissingRefRecord>(layerPool)
-      .from.rn(created.rn!, { resolvePaths: ["owner"], allowMissing: false });
+      .from.rn(
+        created.rn!,
+        korm.resolve("owner"),
+        korm.disallowMissingReferences(),
+      );
     expect(strictRes.isErr()).toBe(true);
   });
 
@@ -1821,7 +2014,7 @@ describe("layers integration", () => {
           `[rn][from::sqlite]:${groupNames.namespace}:${groupNames.kind}:*`,
         ),
       )
-      .get({ resolvePaths: ["primary", "backup", "members[*]"] as const });
+      .get(korm.resolve("primary", "backup", "members[*]"));
     const groups = groupRes.unwrap();
     expect(groups.length).toBe(1);
 
@@ -1914,7 +2107,7 @@ describe("layers integration", () => {
       .from.query(
         korm.rn(`[rn][from::sqlite]:${regNames.namespace}:${regNames.kind}:*`),
       )
-      .get({ resolvePaths });
+      .get(korm.resolve(...resolvePaths));
     const regs = regsResult.unwrap();
     expect(regs.length).toBe(1);
 
@@ -2001,7 +2194,7 @@ describe("layers integration", () => {
     const resolved = (
       await korm
         .item<PrefixRecord>(layerPool)
-        .from.rn(created.rn!, { resolvePaths: ["files"] })
+        .from.rn(created.rn!, korm.resolve("files"))
     ).unwrap();
 
     const resolvedFiles = resolved.data?.files as unknown;
@@ -2049,7 +2242,7 @@ describe("layers integration", () => {
       const resolved = (
         await korm
           .item<FileBundleRecord>(layerPool)
-          .from.rn(created.rn!, { resolvePaths: ["files[*]"] })
+          .from.rn(created.rn!, korm.resolve("files[*]"))
       ).unwrap();
 
       const resolvedFiles = resolved.data?.files as DepotFile[];
@@ -2091,7 +2284,7 @@ describe("layers integration", () => {
         const resolved = (
           await korm
             .item<InvoiceRecord>(layerPool)
-            .from.rn(created.rn!, { resolvePaths: ["file"] })
+            .from.rn(created.rn!, korm.resolve("file"))
         ).unwrap();
 
         const resolvedFile = resolved.data?.file;
@@ -2112,7 +2305,7 @@ describe("layers integration", () => {
         const resolvedAgain = (
           await korm
             .item<InvoiceRecord>(layerPool)
-            .from.rn(created.rn!, { resolvePaths: ["file"] })
+            .from.rn(created.rn!, korm.resolve("file"))
         ).unwrap();
 
         const resolvedAgainFile = resolvedAgain.data?.file;
@@ -3108,7 +3301,7 @@ describe("layers integration", () => {
         .from.query(
           korm.rn(`[rn][from::mysql]:${carNames.namespace}:${carNames.kind}:*`),
         )
-        .get({ resolvePaths: ["owner"] as const });
+        .get(korm.resolve("owner"));
       const cars = carsResult.unwrap();
       expect(cars.length).toBe(1);
 

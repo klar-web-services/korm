@@ -390,14 +390,14 @@ describe("hostile API probes", () => {
       expect(created.isOk()).toBe(true);
       const item = created.unwrap();
 
-      const readProto = await korm.item<any>(pool).from.rn(item.rn!, {
-        resolvePaths: ["__proto__.polluted"],
-      });
+      const readProto = await korm
+        .item<any>(pool)
+        .from.rn(item.rn!, korm.resolve("__proto__.polluted"));
       expect(readProto.isErr()).toBe(true);
 
-      const readCtor = await korm.item<any>(pool).from.rn(item.rn!, {
-        resolvePaths: ["constructor.prototype.polluted"],
-      });
+      const readCtor = await korm
+        .item<any>(pool)
+        .from.rn(item.rn!, korm.resolve("constructor.prototype.polluted"));
       expect(readCtor.isErr()).toBe(true);
     });
   });
@@ -445,9 +445,9 @@ describe("hostile API probes", () => {
         .create();
       expect(holder.isOk()).toBe(true);
 
-      const read = await korm.item<any>(pool).from.rn(holder.unwrap().rn!, {
-        resolvePaths: ["refs.*"],
-      });
+      const read = await korm
+        .item<any>(pool)
+        .from.rn(holder.unwrap().rn!, korm.resolve("refs.*"));
       expect(read.isOk()).toBe(true);
       const data = read.unwrap().data as any;
 
@@ -458,6 +458,68 @@ describe("hostile API probes", () => {
       expect(data.refs["__proto__"]).toBe(proto.rn!.value());
       expect((data.refs as any).polluted).toBeUndefined();
       expect(({} as any).polluted).toBeUndefined();
+    });
+  });
+
+  test("rejects duplicate get option kinds", async () => {
+    await withPool(async (pool) => {
+      const created = await korm
+        .item<any>(pool)
+        .from.data({
+          namespace: "dupes",
+          kind: "opts",
+          data: { name: "alice", score: 1 },
+        })
+        .create();
+      expect(created.isOk()).toBe(true);
+
+      const rn = korm.rn("[rn]:dupes:opts:*");
+      const read = await korm
+        .item<any>(pool)
+        .from.query(rn)
+        .get(korm.first(), korm.first(2));
+      expect(read.isErr()).toBe(true);
+    });
+  });
+
+  test("rejects sortBy wildcard paths", async () => {
+    await withPool(async (pool) => {
+      const created = await korm
+        .item<any>(pool)
+        .from.data({
+          namespace: "sort",
+          kind: "wild",
+          data: { refs: [{ name: "alice" }] },
+        })
+        .create();
+      expect(created.isOk()).toBe(true);
+
+      const rn = korm.rn("[rn]:sort:wild:*");
+      const read = await korm
+        .item<any>(pool)
+        .from.query(rn)
+        .get(korm.sortBy("refs[*].name", "asc"));
+      expect(read.isErr()).toBe(true);
+    });
+  });
+
+  test("from.rn rejects unsupported query-only options at runtime", async () => {
+    await withPool(async (pool) => {
+      const created = await korm
+        .item<any>(pool)
+        .from.data({
+          namespace: "strict",
+          kind: "rnopts",
+          data: { name: "alice" },
+        })
+        .create();
+      expect(created.isOk()).toBe(true);
+
+      const read = await (korm.item<any>(pool).from.rn as any)(
+        created.unwrap().rn!,
+        korm.first(),
+      );
+      expect(read.isErr()).toBe(true);
     });
   });
 

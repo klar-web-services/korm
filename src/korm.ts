@@ -35,7 +35,13 @@ import {
 } from "./sources/poolMeta";
 import { LocalDepot, S3Depot } from ".";
 import type { S3DepotOptions } from "./depot/depots/s3Depot";
-import type { GetOpts } from "./core/query";
+import type {
+  DisallowMissingReferencesGetOption,
+  FirstGetOption,
+  ResolveGetOption,
+  SortByGetOption,
+  SortDirection,
+} from "./core/query";
 import { danger, needsDanger } from "./core/danger";
 
 type JsonPrimitive = string | number | boolean | null;
@@ -696,8 +702,51 @@ const korm = {
    */
   resolve<const Paths extends readonly string[]>(
     ...paths: Paths
-  ): GetOpts<Paths> {
-    return { resolvePaths: paths };
+  ): ResolveGetOption<Paths> {
+    return { type: "resolve", paths };
+  },
+
+  /**
+   * Keep only the first `n` query results after filtering/sorting.
+   * Next: pass this to `QueryBuilder.get(...)`.
+   */
+  first<const N extends number = 1>(n?: N): FirstGetOption<N> {
+    return { type: "first", n: (n ?? 1) as N };
+  },
+
+  /**
+   * Sort query results by a data path.
+   * Next: pass this to `QueryBuilder.get(...)`.
+   */
+  sortBy(
+    key: string,
+    directionOrOptions?: SortDirection | { allowStringify?: boolean },
+    options?: { allowStringify?: boolean },
+  ): SortByGetOption {
+    const direction: SortDirection =
+      directionOrOptions === "asc" || directionOrOptions === "desc"
+        ? directionOrOptions
+        : "asc";
+    const config =
+      typeof directionOrOptions === "object" &&
+      directionOrOptions !== null &&
+      !Array.isArray(directionOrOptions)
+        ? directionOrOptions
+        : options;
+    return {
+      type: "sortBy",
+      key,
+      direction,
+      allowStringify: config?.allowStringify,
+    };
+  },
+
+  /**
+   * Fail when RN resolution hits a missing reference.
+   * Next: pass this to `from.rn(...)` or `QueryBuilder.get(...)`.
+   */
+  disallowMissingReferences(): DisallowMissingReferencesGetOption {
+    return { type: "disallowMissingReferences" };
   },
 
   /**
@@ -837,6 +886,42 @@ export namespace korm {
      * Next: build with `korm.rn(...)` or store in item fields.
      */
     export type RN<T extends JSONable = JSONable> = import("./core/rn").RN<T>;
+    /**
+     * Resolve references by path in query and RN reads.
+     * Next: create via `korm.resolve(...)`.
+     */
+    export type ResolveGetOption<
+      Paths extends readonly string[] = readonly string[],
+    > = import("./core/query").ResolveGetOption<Paths>;
+    /**
+     * Keep first `n` results from a query.
+     * Next: create via `korm.first(...)`.
+     */
+    export type FirstGetOption<N extends number = number> =
+      import("./core/query").FirstGetOption<N>;
+    /**
+     * Sort query output by a data path.
+     * Next: create via `korm.sortBy(...)`.
+     */
+    export type SortByGetOption = import("./core/query").SortByGetOption;
+    /**
+     * Sorting direction accepted by `korm.sortBy(...)`.
+     */
+    export type SortDirection = import("./core/query").SortDirection;
+    /**
+     * Enforce missing-reference failures during resolution.
+     * Next: create via `korm.disallowMissingReferences()`.
+     */
+    export type DisallowMissingReferencesGetOption =
+      import("./core/query").DisallowMissingReferencesGetOption;
+    /**
+     * Any option accepted by `QueryBuilder.get(...)`.
+     */
+    export type QueryGetOption = import("./core/query").QueryGetOption;
+    /**
+     * Option subset accepted by `from.rn(...)`.
+     */
+    export type RnGetOption = import("./core/query").RnGetOption;
     /**
      * SQLite layer implementation.
      * Next: pass `korm.layers.sqlite(...)` to `korm.pool().setLayers(...)`.

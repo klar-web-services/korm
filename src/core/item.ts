@@ -1,5 +1,12 @@
 import { Result } from "@fkws/klonk-result";
-import { QueryBuilder, type GetOpts, type ResolvePaths } from "./query";
+import {
+  QueryBuilder,
+  normalizeGetOptions,
+  type GetOptionResolvePaths,
+  type QueryGetOption,
+  type ResolvePaths,
+  type RnGetOption,
+} from "./query";
 import { RN } from "./rn";
 import util from "util";
 import type { LayerPool } from "../sources/layerPool";
@@ -471,10 +478,12 @@ export class UninitializedItem<T extends JSONable> {
      * Fetch a single item by item RN.
      * Use `korm.resolve(...)` to materialize RN references in the returned data.
      */
-    rn: async <const Paths extends readonly string[] = []>(
+    rn: async <const Options extends readonly RnGetOption[] = []>(
       rn: RN<T>,
-      options?: GetOpts<Paths>,
-    ): Promise<Result<Item<ResolvePaths<T, Paths>>>> => {
+      ...options: Options
+    ): Promise<
+      Result<Item<ResolvePaths<T, GetOptionResolvePaths<Options>>>>
+    > => {
       try {
         if (rn.pointsTo() !== "item") {
           throw new Error(
@@ -496,7 +505,19 @@ export class UninitializedItem<T extends JSONable> {
         const collectionRn = collectionRes.unwrap();
         const query = new QueryBuilder<T>(collectionRn, this);
         query.where(eq("rnId", rn.id));
-        const result = await query.get(options);
+        const normalized = normalizeGetOptions(options, "rn");
+        if (normalized.isErr()) {
+          return new Result({ success: false, error: normalized.error });
+        }
+        const parsed = normalized.unwrap();
+        const queryOptions: QueryGetOption[] = [];
+        if (parsed.resolvePaths.length > 0) {
+          queryOptions.push({ type: "resolve", paths: parsed.resolvePaths });
+        }
+        if (!parsed.allowMissing) {
+          queryOptions.push({ type: "disallowMissingReferences" });
+        }
+        const result = await query.get(...queryOptions);
         if (result.isErr()) {
           return new Result({ success: false, error: result.error });
         }
@@ -511,7 +532,7 @@ export class UninitializedItem<T extends JSONable> {
         }
         return new Result({
           success: true,
-          data: items[0] as Item<ResolvePaths<T, Paths>>,
+          data: items[0] as Item<ResolvePaths<T, GetOptionResolvePaths<Options>>>,
         });
       } catch (error) {
         return new Result({

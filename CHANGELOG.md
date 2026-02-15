@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.4.0
+
+Redesigns query read options into a variadic helper API, adds built-in `first` and `sortBy` query options, and tightens option validation semantics.
+
+**Core API**
+- Replaced object-style read options with discriminated variadic helpers for `QueryBuilder.get(...)` and `from.rn(...)` (`src/core/query.ts`, `src/core/item.ts`).
+- Added `korm.first(n?)`, `korm.sortBy(key, direction?, { allowStringify? })`, and `korm.disallowMissingReferences()` helpers, and updated `korm.resolve(...)` to return helper-option objects (`src/korm.ts`).
+- Added strict option normalization with duplicate-kind rejection, invalid `first(n)` validation, and runtime rejection of query-only options on `from.rn(...)` (`src/core/query.ts`, `src/core/item.ts`).
+- Added query-side sorting semantics with nested RN path resolution, direction-based null placement, wildcard sort-path rejection, and optional non-scalar stringify mode (`src/core/query.ts`).
+- Added `first()`/`first(1)` single-item return mode (error on zero matches) while keeping `first(n>1)` as up-to-`n` arrays (`src/core/query.ts`).
+
+**Typing**
+- Added public option types under `korm.types` (`ResolveGetOption`, `FirstGetOption`, `SortByGetOption`, `DisallowMissingReferencesGetOption`, `QueryGetOption`, `RnGetOption`) and tuple-based return-shape inference for `get(...)` (`src/korm.ts`, `src/core/query.ts`).
+- Enforced type-level restriction that `from.rn(...)` accepts only resolve/missing-reference options (`src/core/item.ts`, `src/core/query.unit.test.ts`).
+
+**Testing**
+- Added core unit coverage for option validation, sort behavior, first-result behavior, and type-level assertions (`src/core/query.unit.test.ts`).
+- Added integration coverage for `first`/`sortBy`, nested RN-path sorting, missing-reference sort handling, and strict missing-reference mode (`src/testing/integration.test.ts`).
+- Added hostile tests for duplicate option rejection, wildcard sort-path rejection, and runtime rejection of query-only options on `from.rn(...)` (`src/testing/hostile.test.ts`).
+
+**Docs**
+- Updated README query examples and API reference to the new variadic helper model and documented `first`/`sortBy` semantics (`README.md`).
+
 ## 1.3.2
 
 Hardens SQLite contention handling during multi-process startup by avoiding lock-sensitive constructor PRAGMAs and applying a default SQLite lock wait policy.
