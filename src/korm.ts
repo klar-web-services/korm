@@ -35,6 +35,8 @@ import {
 } from "./sources/poolMeta";
 import { LocalDepot, S3Depot } from ".";
 import type { S3DepotOptions } from "./depot/depots/s3Depot";
+import type { PgConnectionOptions } from "./runtime/pgClient";
+import type { PoolOptions as MysqlPoolOptions } from "mysql2/promise";
 import type {
   DisallowMissingReferencesGetOption,
   FirstGetOption,
@@ -397,7 +399,7 @@ async function discover(sourceLayer: SourceLayer): Promise<LayerPool> {
           `Pool metadata has invalid pg connection options for "${layer.ident}".`,
         );
       }
-      layerMap.set(layer.ident, layers.pg(layer.value as any));
+      layerMap.set(layer.ident, layers.pg(layer.value as PgConnectionOptions));
       continue;
     }
     if (layer.type === "mysql") {
@@ -415,7 +417,7 @@ async function discover(sourceLayer: SourceLayer): Promise<LayerPool> {
           `Pool metadata has invalid mysql connection options for "${layer.ident}".`,
         );
       }
-      layerMap.set(layer.ident, layers.mysql(layer.value as any));
+      layerMap.set(layer.ident, layers.mysql(layer.value as MysqlPoolOptions));
       continue;
     }
   }
@@ -806,33 +808,39 @@ export namespace korm {
    */
   export namespace types {
     /**
-     * JSON-compatible values accepted by korm item data.
-     * Next: use as the bound for `korm.item<T>(pool)` model types.
+     * Canonical JSON payload shape supported by korm item `data`.
+     * Represents the serializable primitives/arrays/objects persisted to layers.
+     * Next: use as a generic bound for model types and reusable helpers.
      */
     export type JSONable = JsonSerializable;
     /**
-     * Time units supported by backup interval schedules.
-     * Next: call `korm.interval.every(...)`.
+     * Time unit literals accepted by backup interval schedules.
+     * Represents the frequency granularity passed into the interval builder.
+     * Next: call `korm.interval.every(unit)` when defining backups.
      */
     export type IntervalUnit = import("./sources/backMan").IntervalUnit;
     /**
-     * Interval builder factory used by `korm.interval`.
-     * Next: call `korm.interval.every(...)`.
+     * Factory surface exposed by `korm.interval`.
+     * Represents the entry point that creates typed backup interval builders.
+     * Next: call `.every(...)` to start building an interval rule.
      */
     export type IntervalFactory = import("./sources/backMan").IntervalFactory;
     /**
-     * Fully specified interval definition for backups.
+     * Concrete, validated backup interval specification.
+     * Represents a fully resolved schedule consumed by BackMan.
      * Next: pass to `backups(...).addInterval(...)`.
      */
     export type IntervalSpec = import("./sources/backMan").IntervalSpec;
     /**
-     * Alias for interval specifications.
+     * Interval specification input accepted by backup scheduling APIs.
+     * Represents the serializable schedule payload stored in backup metadata.
      * Next: pass to `backups(...).addInterval(...)`.
      */
     export type IntervalPartial = import("./sources/backMan").IntervalPartial;
     /**
-     * Fluent interval builder for schedules.
-     * Next: chain `.at(...)` or `.on(...)`, then pass to `backups(...).addInterval(...)`.
+     * Fluent builder type returned from `korm.interval.every(...)`.
+     * Represents the stateful schedule-construction chain with compile-time step constraints.
+     * Next: chain `.on(...)` and/or `.at(...)`, then register via `addInterval(...)`.
      */
     export type IntervalBuilder<
       U extends import("./sources/backMan").IntervalUnit,
@@ -844,175 +852,266 @@ export namespace korm {
         | "secondSelected",
     > = import("./sources/backMan").IntervalBuilder<U, S>;
     /**
-     * Weekday selector for interval schedules.
+     * Weekday selector accepted by weekly interval schedules.
+     * Represents either a weekday name token or weekday index.
      * Next: pass to `korm.interval.every("week").on(...)`.
      */
     export type Weekday = import("./sources/backMan").Weekday;
     /**
-     * Weekday name for interval schedules.
-     * Next: pass to `korm.interval.every("week").on(...)`.
+     * String weekday names supported by interval schedules.
+     * Represents symbolic day selectors used in backup rules.
+     * Next: use with weekly `.on(...)` schedule builders.
      */
     export type WeekdayName = import("./sources/backMan").WeekdayName;
     /**
-     * Weekday index for interval schedules (0=Monday..6=Sunday).
+     * Numeric weekday indices used by interval schedules.
+     * Represents `0..6` day positions for weekly backup rules.
      * Next: pass to `korm.interval.every("week").on(...)`.
      */
     export type WeekdayIndex = import("./sources/backMan").WeekdayIndex;
     /**
-     * Persisted item with pending changes.
+     * Persisted item wrapper with staged but uncommitted edits.
+     * Represents the result of `Item.update(...)` before the write is finalized.
      * Next: call `.commit()` or include it in `korm.tx(...).persist()`.
      */
     export type UncommittedItem<T extends JSONable> =
       import("./core/item").UncommittedItem<T>;
     /**
-     * In-memory item awaiting `.create()`.
+     * In-memory item wrapper that does not yet exist in storage.
+     * Represents the result of `from.data(...)` / `.empty()` before insertion.
      * Next: call `.create()` or include it in `korm.tx(...).persist()`.
      */
     export type FloatingItem<T extends JSONable> =
       import("./core/item").FloatingItem<T>;
     /**
-     * Persisted item in sync with the database.
-     * Next: call `.update(...)` or `.delete()`.
+     * Persisted item wrapper synchronized with layer state.
+     * Represents a committed row read from or written to a layer.
+     * Next: call `.update(...)`, `.delete()`, or read `.data`.
      */
     export type Item<T extends JSONable> = import("./core/item").Item<T>;
     /**
-     * Item builder returned by `korm.item<T>(pool)`.
+     * Typed item factory API returned by `korm.item<T>(pool)`.
+     * Represents the namespace/kind-scoped constructor for CRUD/query entry points.
      * Next: call `.from.data(...)`, `.from.query(...)`, `.from.rn(...)`, or `.empty()`.
      */
     export type UninitializedItem<T extends JSONable> =
       import("./core/item").UninitializedItem<T>;
     /**
-     * Resource Name (RN) type for typed references.
-     * Next: build with `korm.rn(...)` or store in item fields.
+     * Resource Name type used for cross-item and depot references.
+     * Represents parsed RN tokens with optional layer/depot mods and typed payload links.
+     * Next: build with `korm.rn(...)` and store in relation/depot fields.
      */
     export type RN<T extends JSONable = JSONable> = import("./core/rn").RN<T>;
     /**
-     * Resolve references by path in query and RN reads.
-     * Next: create via `korm.resolve(...)`.
+     * Query `get(...)` option that resolves RN references along selected paths.
+     * Represents a path list plus resolve behavior configuration.
+     * Next: create via `korm.resolve(...)` and pass to query/RN reads.
      */
     export type ResolveGetOption<
       Paths extends readonly string[] = readonly string[],
     > = import("./core/query").ResolveGetOption<Paths>;
     /**
-     * Keep first `n` results from a query.
-     * Next: create via `korm.first(...)`.
+     * Query `get(...)` option limiting result count.
+     * Represents single-record mode or fixed-size first-`n` slicing.
+     * Next: create via `korm.first()` or `korm.first(n)`.
      */
     export type FirstGetOption<N extends number = number> =
       import("./core/query").FirstGetOption<N>;
     /**
-     * Sort query output by a data path.
-     * Next: create via `korm.sortBy(...)`.
+     * Query `get(...)` option defining sort path/direction behavior.
+     * Represents a typed sort instruction generated by query helpers.
+     * Next: create via `korm.sortBy(path, direction?)`.
      */
     export type SortByGetOption = import("./core/query").SortByGetOption;
     /**
-     * Sorting direction accepted by `korm.sortBy(...)`.
+     * Direction literals accepted by `korm.sortBy(...)`.
+     * Represents ascending/descending ordering for query result sets.
+     * Next: pass when constructing `SortByGetOption` instances.
      */
     export type SortDirection = import("./core/query").SortDirection;
     /**
-     * Enforce missing-reference failures during resolution.
+     * Query `get(...)` option enabling strict missing-reference handling.
+     * Represents a guard that turns unresolved RN paths into runtime errors.
      * Next: create via `korm.disallowMissingReferences()`.
      */
     export type DisallowMissingReferencesGetOption =
       import("./core/query").DisallowMissingReferencesGetOption;
     /**
-     * Any option accepted by `QueryBuilder.get(...)`.
+     * Union of all options accepted by `QueryBuilder.get(...)`.
+     * Represents the complete option contract for query result shaping.
+     * Next: use in helper APIs that forward query options.
      */
     export type QueryGetOption = import("./core/query").QueryGetOption;
     /**
-     * Option subset accepted by `from.rn(...)`.
+     * Option subset accepted by `from.rn(...)` reads.
+     * Represents only RN-read-compatible query options.
+     * Next: use when typing wrappers around RN fetch calls.
      */
     export type RnGetOption = import("./core/query").RnGetOption;
     /**
-     * SQLite layer implementation.
-     * Next: pass `korm.layers.sqlite(...)` to `korm.pool().setLayers(...)`.
+     * Core storage-layer interface implemented by sqlite/pg/mysql adapters.
+     * Represents the CRUD/query/schema contract consumed by `LayerPool`.
+     * Next: implement this when building custom/wrapped layers for `setLayers(...)`.
+     */
+    export type SourceLayer = import("./sources/sourceLayer").SourceLayer;
+    /**
+     * Write-operation options passed into layer insert/update/delete calls.
+     * Represents mutation behavior flags such as destructive schema allowance.
+     * Next: use when forwarding options inside `SourceLayer` wrappers.
+     */
+    export type PersistOptions = import("./sources/sourceLayer").PersistOptions;
+    /**
+     * Discriminated result union returned by layer insert/update methods.
+     * Represents success/failure payloads including revert handlers and affected item wrappers.
+     * Next: return this from `SourceLayer.insertItem(...)` or `SourceLayer.updateItem(...)`.
+     */
+    export type DbChangeResult<T extends JSONable> =
+      import("./sources/sourceLayer").DbChangeResult<T>;
+    /**
+     * Result union returned by `SourceLayer.deleteItem(...)`.
+     * Represents either a successful delete or an error payload.
+     * Next: use in layer wrappers and transaction plumbing.
+     */
+    export type DbDeleteResult = import("./sources/sourceLayer").DbDeleteResult;
+    /**
+     * Normalized column-kind metadata used by layers/query planners.
+     * Represents decoded storage types for table columns in a namespace/kind.
+     * Next: return from `SourceLayer.getColumnKinds(...)`.
+     */
+    export type ColumnKind = import("./core/columnKind").ColumnKind;
+    /**
+     * Concrete SQLite `SourceLayer` implementation class.
+     * Represents a file-backed layer adapter with korm schema/query behavior.
+     * Next: create via `korm.layers.sqlite(path)` and register in a pool.
      */
     export type SqliteLayer = import("./sources").SqliteLayer;
     /**
-     * Postgres layer implementation.
-     * Next: pass `korm.layers.pg(...)` to `korm.pool().setLayers(...)`.
+     * Concrete Postgres `SourceLayer` implementation class.
+     * Represents the pg-backed adapter used by pools and backups.
+     * Next: create via `korm.layers.pg(...)` and register in a pool.
      */
     export type PgLayer = import("./sources").PgLayer;
     /**
-     * MySQL layer implementation.
-     * Next: pass `korm.layers.mysql(...)` to `korm.pool().setLayers(...)`.
+     * Concrete MySQL `SourceLayer` implementation class.
+     * Represents the mysql2-backed adapter used by pools and backups.
+     * Next: create via `korm.layers.mysql(...)` and register in a pool.
      */
     export type MysqlLayer = import("./sources").MysqlLayer;
     /**
-     * In-memory wrapper for encrypted values.
-     * Next: create via `korm.encrypt(...)`.
+     * Input union accepted by `korm.layers.pg(...)`.
+     * Represents either a connection URL string or a typed connection-options object.
+     * Next: use for helper signatures that construct pg layers.
+     */
+    export type PgConnectionInput = import("./runtime/pgClient").PgConnectionInput;
+    /**
+     * Object-form Postgres connection options accepted by `korm.layers.pg(...)`.
+     * Represents engine-native pg/bun SQL configuration fields for object literals.
+     * Next: use when you want IntelliSense for pg config keys.
+     */
+    export type PgConnectionOptions = import("./runtime/pgClient").PgConnectionOptions;
+    /**
+     * Input union accepted by `korm.layers.mysql(...)`.
+     * Represents either a MySQL connection URL or mysql2 pool options.
+     * Next: use for helper signatures that construct mysql layers.
+     */
+    export type MysqlConnectionInput = string | import("mysql2/promise").PoolOptions;
+    /**
+     * Object-form mysql2 pool options accepted by `korm.layers.mysql(...)`.
+     * Represents the typed config shape for MySQL object-literal connection setup.
+     * Next: use when you want IntelliSense for mysql config keys.
+     */
+    export type MysqlConnectionOptions = import("mysql2/promise").PoolOptions;
+    /**
+     * Wrapper type for values that should be encrypted at rest.
+     * Represents encrypted-field placeholders carried through item data until persistence.
+     * Next: create values via `korm.encrypt(...)`.
      */
     export type Encrypt<T extends JSONable> =
       import("./security/encryption").Encrypt<T>;
     /**
-     * Alias for password-hashed values.
-     * Next: create via `korm.password(...)`.
+     * Wrapper type for password-hash semantics.
+     * Represents one-way secret fields intended for verify/check flows, not decryption.
+     * Next: create values via `korm.password(...)`.
      */
     export type Password<T extends JSONable> =
       import("./security/encryption").Password<T>;
     /**
-     * Depot interface for file storage.
-     * Next: create with `korm.depots.*` and pass to `setDepots(...)`.
+     * File-storage backend interface used by depots.
+     * Represents the read/write/list/delete contract consumed by depot workflows.
+     * Next: implement custom depots or use `korm.depots.*` factories.
      */
     export type Depot = import("./depot/depot").Depot;
     /**
-     * Blob-like payload accepted by depots, including readable streams.
-     * Next: pass to `korm.file(...)` when creating depot files.
+     * Binary payload union accepted for depot file writes.
+     * Represents Blob/Buffer/stream-like content sources depots can upload.
+     * Next: pass to `korm.file({ rn, file })`.
      */
     export type DepotBlob = import("./depot/depotFile").DepotBlob;
     /**
-     * Value accepted for depot file fields in item data.
-     * Next: use `korm.file(...)` or include it in item data.
+     * Union of value shapes accepted for depot-backed item fields.
+     * Represents floating/uncommitted/committed depot file wrappers and compatible inputs.
+     * Next: use in model field typing for file attachments.
      */
     export type DepotFileLike = import("./depot/depotFile").DepotFileLike;
     /**
-     * Depot file state machine variants.
-     * Next: use with `DepotFile` helpers after resolving depot RNs.
+     * State discriminants for depot file lifecycle wrappers.
+     * Represents where a file currently sits in its create/update/commit flow.
+     * Next: narrow on this in advanced depot helper logic.
      */
     export type DepotFileState = import("./depot/depotFile").DepotFileState;
     /**
-     * S3 depot configuration options.
+     * Configuration object for the built-in S3 depot adapter.
+     * Represents bucket/path/credential/runtime settings for S3 file storage.
      * Next: pass to `korm.depots.s3(...)`.
      */
     export type S3DepotOptions =
       import("./depot/depots/s3Depot").S3DepotOptions;
     /**
-     * WAL configuration options.
-     * Next: pass to `withWal(...)`.
+     * Write-ahead-log mode configuration accepted by pool builders.
+     * Represents how WAL capture/recovery behavior is enabled for a pool.
+     * Next: pass to `.withWal(...)`.
      */
     export type WalMode = import("./wal/wal").WalMode;
     /**
-     * WAL retention policy.
-     * Next: set the `retention` field in `withWal(...)`.
+     * Retention-policy shape for WAL cleanup.
+     * Represents pruning configuration for historical WAL records.
+     * Next: set as `retention` inside `.withWal(...)`.
      */
     export type WalRetention = import("./wal/wal").WalRetention;
     /**
-     * WAL operation record.
-     * Next: use when inspecting WAL data produced by `withWal(...)`.
+     * Item-level operation record stored inside WAL entries.
+     * Represents create/update/delete intents used during replay/recovery.
+     * Next: use when inspecting or validating WAL record contents.
      */
     export type WalOp = import("./wal/wal").WalOp;
     /**
-     * WAL depot file operation record.
-     * Next: use when inspecting WAL depot operations.
+     * Depot-file operation record stored inside WAL entries.
+     * Represents file upload/delete intents associated with transactional writes.
+     * Next: use when inspecting WAL depot operation streams.
      */
     export type WalDepotOp = import("./wal/wal").WalDepotOp;
     /**
-     * WAL record envelope stored in the WAL depot.
-     * Next: use when reading WAL records generated by `withWal(...)`.
+     * Top-level WAL record envelope persisted to the WAL depot.
+     * Represents a transaction batch plus metadata needed for crash recovery.
+     * Next: use when reading/parsing WAL files generated by `.withWal(...)`.
      */
     export type WalRecord = import("./wal/wal").WalRecord;
     /**
-     * Opened layer pool instance.
-     * Next: call `.close()` when you are done.
+     * Live pool instance coordinating layers, depots, locks, metadata, and WAL.
+     * Represents the runtime object returned by `korm.pool(...).open()`.
+     * Next: pass to `korm.item<T>(pool)` and call `.close()` on shutdown.
      */
     export type LayerPool = import("./sources/layerPool").LayerPool;
     /**
-     * Shared lock configuration options.
-     * Next: pass to `withLocks(...)`.
+     * Shared-lock configuration accepted by pool builders.
+     * Represents lock storage mode used for cross-process/item concurrency control.
+     * Next: pass to `.withLocks(...)`.
      */
     export type LockMode = import("./sources/lockStore").LockMode;
     /**
-     * Pool metadata configuration.
-     * Next: pass to `withMeta(...)`.
+     * Pool metadata configuration accepted by pool builders.
+     * Represents where/how layer and depot metadata is stored for discovery.
+     * Next: pass to `.withMeta(...)`.
      */
     export type PoolMetaMode = import("./sources/poolMeta").PoolMetaMode;
   }

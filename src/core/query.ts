@@ -32,7 +32,7 @@ export type _QueryComparison = {
   /** JSON path to compare against. */
   property: string;
   /** Value to compare. */
-  value: any;
+  value: unknown;
 };
 
 /**
@@ -1410,19 +1410,44 @@ function compareValues(
     return regex.test(value);
   }
 
-  if (operator === ">") {
-    return (value as any) > (target as any);
-  }
-  if (operator === "<") {
-    return (value as any) < (target as any);
-  }
-  if (operator === ">=") {
-    return (value as any) >= (target as any);
-  }
-  if (operator === "<=") {
-    return (value as any) <= (target as any);
+  if (operator === ">" || operator === "<" || operator === ">=" || operator === "<=") {
+    return compareOrderedValues(value, target, operator);
   }
 
+  return false;
+}
+
+function compareOrderedValues(
+  value: unknown,
+  target: unknown,
+  operator: ">" | "<" | ">=" | "<=",
+): boolean {
+  if (typeof value === "number" && typeof target === "number") {
+    if (operator === ">") return value > target;
+    if (operator === "<") return value < target;
+    if (operator === ">=") return value >= target;
+    return value <= target;
+  }
+  if (typeof value === "bigint" && typeof target === "bigint") {
+    if (operator === ">") return value > target;
+    if (operator === "<") return value < target;
+    if (operator === ">=") return value >= target;
+    return value <= target;
+  }
+  if (typeof value === "string" && typeof target === "string") {
+    if (operator === ">") return value > target;
+    if (operator === "<") return value < target;
+    if (operator === ">=") return value >= target;
+    return value <= target;
+  }
+  if (typeof value === "boolean" && typeof target === "boolean") {
+    const left = Number(value);
+    const right = Number(target);
+    if (operator === ">") return left > right;
+    if (operator === "<") return left < right;
+    if (operator === ">=") return left >= right;
+    return left <= right;
+  }
   return false;
 }
 

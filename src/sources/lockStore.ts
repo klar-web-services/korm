@@ -148,8 +148,8 @@ export class LayerLockStore implements LockStore {
                  WHERE "lock_id" = $4 AND ("expires_at" <= $5 OR "owner" = $1)
                  RETURNING "lock_id"`,
         [ownerId, expiresAt, now, normalized.lockId, now],
-      );
-      if ((updated as any[]).length > 0) return true;
+      ) as Array<{ lock_id: string }>;
+      if (updated.length > 0) return true;
       try {
         await layer._db.unsafe(
           `INSERT INTO "${LOCK_TABLE}" ("lock_id", "owner", "expires_at", "created_at", "updated_at")
@@ -215,8 +215,8 @@ export class LayerLockStore implements LockStore {
                  WHERE "lock_id" = $3 AND "owner" = $4
                  RETURNING "lock_id"`,
         [expiresAt, now, normalized.lockId, ownerId],
-      );
-      return (result as any[]).length > 0;
+      ) as Array<{ lock_id: string }>;
+      return result.length > 0;
     }
 
     if (this._layer.type === "mysql") {

@@ -1096,7 +1096,7 @@ export class SqliteLayer implements SourceLayer {
 
   /** @inheritdoc */
   async executeQuery<T extends JSONable>(
-    query: QueryBuilder<any>,
+    query: QueryBuilder<T>,
   ): Promise<Result<Item<T>[]>> {
     const tableName = `__items__${query.rn!.namespace!}__${query.rn!.kind!}`;
 
@@ -1170,11 +1170,15 @@ export class SqliteLayer implements SourceLayer {
 
   /** @inheritdoc */
   async ensureTables(
-    item: Item<any> | FloatingItem<any> | UncommittedItem<any>,
+    item:
+      | Item<JSONable>
+      | FloatingItem<JSONable>
+      | UncommittedItem<JSONable>,
     destructive: boolean = false,
   ): Promise<string> {
     const rawTableName = `__items__${item.rn!.namespace!}__${item.rn!.kind!}`;
     const tableName = this._quoteIdent(rawTableName);
+    const itemData = (item.data ?? {}) as Record<string, JSONable>;
     let schemaChanged = false;
 
     const exists = this._db
@@ -1192,9 +1196,9 @@ export class SqliteLayer implements SourceLayer {
     if (!exists || exists.e === 0) {
       let createString = `CREATE TABLE IF NOT EXISTS ${tableName} ( "rnId" ID_TEXT PRIMARY KEY, `;
 
-      for (const key in item.data) {
+      for (const key in itemData) {
         const columnName = this._quoteIdent(key);
-        const v = (item.data as any)[key];
+        const v = itemData[key];
 
         const t = this._inferSqliteTypeFromValue(v);
         if (t === "TEXT") createString += `${columnName} TEXT, `;
@@ -1225,10 +1229,10 @@ export class SqliteLayer implements SourceLayer {
       .prepare(`PRAGMA table_info(${tableName})`)
       .all<{ name: string; type: string }>();
 
-    for (const key in item.data) {
+    for (const key in itemData) {
       const rawColumnName = key;
       const columnName = this._quoteIdent(rawColumnName);
-      const v = (item.data as any)[key];
+      const v = itemData[key];
 
       // If you ever pass partial objects with undefined, don't attempt to infer/alter.
       if (v === undefined) continue;

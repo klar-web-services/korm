@@ -22,6 +22,7 @@
     "clean": "rm -rf dist",
     "lint:actions": "node-actionlint",
     "test:stage": "bash ./src/testing/stage-resources.sh",
+    "test:full": "bash ./src/testing/test-full-suite.sh",
     "test:unit": "bun run lint:actions && bun run build && bun test --coverage --max-concurrency=1 $(find ./src -name \"*.unit.test.ts\" -print)",
     "test:integration": "bun run lint:actions && bun run build && bun test \"src/testing/integration.test.ts\"",
     "test:hostile": "bun run lint:actions && bun run build && bun test \"src/testing/hostile.test.ts\"",

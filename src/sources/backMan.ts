@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { RN } from "../core/rn";
+import type { JSONable } from "../korm";
 import {
   BackupEventReader,
   buildBackupPrefixRn,
@@ -515,7 +516,7 @@ type BackupTimerState = BackupScheduleEntry & {
 };
 
 type BackupsLocker = {
-  acquire: (rn: RN<any>, timeoutMs?: number) => Promise<() => void>;
+  acquire: (rn: RN<JSONable>, timeoutMs?: number) => Promise<() => void>;
 };
 
 type SqliteDb = {

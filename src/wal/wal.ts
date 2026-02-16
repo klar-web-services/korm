@@ -3,8 +3,9 @@ import type { JSONable } from "../korm";
 import type { Depot } from "../depot/depot";
 import { FloatingDepotFile, type DepotFileBase } from "../depot/depotFile";
 import { RN } from "../core/rn";
-import { FloatingItem } from "../core/item";
+import { FloatingItem, UncommittedItem } from "../core/item";
 import type { SourceLayer } from "../sources/sourceLayer";
+import type { LayerPool } from "../sources/layerPool";
 
 const WAL_VERSION = 4;
 const WAL_ROOT = "__korm_wal__";
@@ -125,7 +126,7 @@ type WalPoolAccess = {
   getDepots: () => Map<string, Depot>;
   findLayerForRn: (rn: RN) => SourceLayer;
   findDepotForRn: (rn: RN) => Depot;
-  poolRef: unknown;
+  poolRef: LayerPool;
 };
 
 function normalizeSegment(value: string, label: string): string {
@@ -600,13 +601,13 @@ export class WalManager {
         throw new Error(`WAL op RN "${rn.value()}" points to a depot.`);
       }
       const layer = this._access.findLayerForRn(rn);
-      const payload = {
-        rn,
-        data: op.data,
-        pool: this._access.poolRef as any,
-      };
       if (op.type === "insert") {
-        const result = await layer.insertItem(payload as any, {
+        const floating = new FloatingItem<JSONable>(
+          this._access.poolRef,
+          rn as RN<JSONable>,
+          op.data,
+        );
+        const result = await layer.insertItem(floating, {
           destructive: op.destructive,
         });
         if (!result.success && !isDuplicateError(result.error)) {
@@ -629,7 +630,12 @@ export class WalManager {
         }
         continue;
       }
-      const result = await layer.updateItem(payload as any, {
+      const uncommitted = new UncommittedItem<JSONable>(
+        this._access.poolRef,
+        rn as RN<JSONable>,
+        op.data,
+      );
+      const result = await layer.updateItem(uncommitted, {
         destructive: op.destructive,
       });
       if (!result.success) {
@@ -668,12 +674,12 @@ export class WalManager {
         continue;
       }
       if (op.type === "delete") {
-        const floating = new FloatingItem<any>(
-          this._access.poolRef as any,
-          rn as any,
+        const floating = new FloatingItem<JSONable>(
+          this._access.poolRef,
+          rn as RN<JSONable>,
           op.before,
         );
-        const result = await layer.insertItem(floating as any, {
+        const result = await layer.insertItem(floating, {
           destructive: op.destructive,
         });
         if (!result.success && !isDuplicateError(result.error)) {
@@ -684,12 +690,12 @@ export class WalManager {
         }
         continue;
       }
-      const payload = {
-        rn,
-        data: op.before,
-        pool: this._access.poolRef as any,
-      };
-      const result = await layer.updateItem(payload as any, {
+      const uncommitted = new UncommittedItem<JSONable>(
+        this._access.poolRef,
+        rn as RN<JSONable>,
+        op.before,
+      );
+      const result = await layer.updateItem(uncommitted, {
         destructive: op.destructive,
       });
       if (!result.success) {

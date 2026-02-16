@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { Result } from "@fkws/klonk-result";
 import { korm, type JSONable } from "../korm";
 import { Item, UninitializedItem } from "./item";
-import { QueryBuilder, type ResolvePaths } from "./query";
+import { QueryBuilder, type ResolvePaths, type _QueryComparison } from "./query";
 import type { RN } from "./rn";
 
 function makeQuery<T extends JSONable>(rows: T[]): QueryBuilder<T> {
@@ -106,6 +106,7 @@ type IsEqual<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2
     ? true
     : false;
+type IsAny<T> = 0 extends (1 & T) ? true : false;
 type Assert<T extends true> = T;
 
 type TypeModel = { owner: RN<{ name: string }>; score: number };
@@ -133,6 +134,8 @@ if (false) {
       Result<Item<ResolvePaths<TypeModel, ["owner.name"]>>>
     >
   > = true;
+  const _queryValueNotAny: Assert<IsEqual<IsAny<_QueryComparison["value"]>, false>> =
+    true;
 
   // @ts-expect-error query-only option is forbidden on from.rn
   typeItem.from.rn(typeRn, korm.first());
@@ -142,4 +145,5 @@ if (false) {
   void _singleType;
   void _manyType;
   void _resolvedSingleType;
+  void _queryValueNotAny;
 }

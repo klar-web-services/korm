@@ -59,7 +59,10 @@ export class MysqlLayer implements SourceLayer {
 
   /** Create a MySQL layer from a connection string or mysql2 PoolOptions. */
   constructor(connectionStringOrOptions: string | PoolOptions) {
-    this._pool = createPool(connectionStringOrOptions as any);
+    this._pool =
+      typeof connectionStringOrOptions === "string"
+        ? createPool(connectionStringOrOptions)
+        : createPool(connectionStringOrOptions);
     this.identifier = this._deriveIdentifier(connectionStringOrOptions);
     this._connectionInput = connectionStringOrOptions;
   }
@@ -1319,7 +1322,7 @@ export class MysqlLayer implements SourceLayer {
 
   /** @inheritdoc */
   async executeQuery<T extends JSONable>(
-    query: QueryBuilder<any>,
+    query: QueryBuilder<T>,
   ): Promise<Result<Item<T>[]>> {
     const rawTableName = `__items__${query.rn!.namespace!}__${query.rn!.kind!}`;
     const tableName = this._resolveTableName(rawTableName);
@@ -1465,12 +1468,16 @@ export class MysqlLayer implements SourceLayer {
 
   /** @inheritdoc */
   async ensureTables(
-    item: Item<any> | FloatingItem<any> | UncommittedItem<any>,
+    item:
+      | Item<JSONable>
+      | FloatingItem<JSONable>
+      | UncommittedItem<JSONable>,
     destructive: boolean = false,
   ): Promise<string> {
     const rawTableName = `__items__${item.rn!.namespace!}__${item.rn!.kind!}`;
     const actualTableName = this._resolveTableName(rawTableName);
     const tableName = this._quoteIdent(actualTableName);
+    const itemData = (item.data ?? {}) as Record<string, JSONable>;
     let schemaChanged = false;
 
     const [existsRows] = await this._pool.query<RowDataPacket[]>(
@@ -1487,9 +1494,9 @@ export class MysqlLayer implements SourceLayer {
     if (!exists) {
       let createString = `CREATE TABLE IF NOT EXISTS ${tableName} ( \`rnId\` VARCHAR(255) PRIMARY KEY, `;
 
-      for (const key in item.data) {
+      for (const key in itemData) {
         const columnName = this._quoteIdent(key);
-        const v = (item.data as any)[key];
+        const v = itemData[key];
 
         const t = this._inferMySqlTypeFromValue(v);
         if (t === "TEXT") createString += `${columnName} TEXT, `;
@@ -1504,8 +1511,8 @@ export class MysqlLayer implements SourceLayer {
       createString += ` )`;
 
       await this._pool.query(createString);
-      for (const key in item.data) {
-        const v = (item.data as any)[key];
+      for (const key in itemData) {
+        const v = itemData[key];
         const kind = this._inferColumnKindFromValue(v);
         await this._setColumnKind(rawTableName, key, kind);
       }
@@ -1517,10 +1524,10 @@ export class MysqlLayer implements SourceLayer {
 
     const columns = await this._getTableInfo(rawTableName);
 
-    for (const key in item.data) {
+    for (const key in itemData) {
       const rawColumnName = key;
       const columnName = this._quoteIdent(rawColumnName);
-      const v = (item.data as any)[key];
+      const v = itemData[key];
 
       if (v === undefined) continue;
 

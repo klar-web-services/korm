@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.4.2
+
+Restores Postgres layer config IntelliSense by replacing the loose object type with concrete option typings.
+
+**Typing**
+- Updated Postgres connection input typing so `korm.layers.pg({ ... })` now surfaces real option keys (for example `host`, `port`, `database`, `username`, `password`) instead of falling back to `Record<string, unknown>` (`src/runtime/pgClient.ts`).
+- Kept Bun/Postgres runtime flexibility by accepting typed postgres.js options while still allowing Bun SQL object-style configs (`src/runtime/pgClient.ts`).
+- Replaced `any` in public query helper/value shapes with `unknown` (`_QueryComparison.value` and `korm.qfns.*` parameters), preserving runtime behavior while preventing type erasure (`src/core/query.ts`, `src/core/queryFns.ts`).
+- Tightened layer-facing contracts to `JSONable`-bound item/RN types (including `SourceLayer.ensureTables(...)`, `KormLocker`, and backup lock hooks), reducing unsafe generic leakage across pool/layer boundaries (`src/sources/sourceLayer.ts`, `src/sources/layerPool.ts`, `src/sources/backMan.ts`).
+- Added a compile-time regression assertion that query comparison values remain non-`any` (`src/core/query.unit.test.ts`).
+- Added missing layer-oriented public aliases under `korm.types` (`SourceLayer`, `PersistOptions`, `DbChangeResult`, `DbDeleteResult`, `ColumnKind`, `PgConnectionInput`, `PgConnectionOptions`, `MysqlConnectionInput`, `MysqlConnectionOptions`) so wrappers/adapters can be typed without deep internal imports (`src/korm.ts`).
+
+**Runtime**
+- Removed WAL `as any` item payload casts by constructing typed `FloatingItem`/`UncommittedItem` instances during apply/undo flows (`src/wal/wal.ts`).
+- Replaced loose lock-store row casts with explicit row shapes for Postgres lock acquire/refresh result checks (`src/sources/lockStore.ts`).
+
+**Testing**
+- Added `test:full` to run a full local validation flow that stages docker resources, imports generated `TESTING_*` env vars, runs `test:unit` + `test:integration` + `test:hostile` in order, and always runs teardown plus env-file cleanup. The command prints a concise end summary, and now only writes suite output files when `-o <path>` is passed (`package.json`, `src/testing/test-full-suite.sh`).
+
+**Docs**
+- Added a `korm.layers.pg({...})` object-config example in the layers section to make typed option usage explicit (`README.md`).
+
 ## 1.4.1
 
 Fixes cross-pool visibility regressions where an initial read against a missing collection could permanently hide later rows created by another pool/process.

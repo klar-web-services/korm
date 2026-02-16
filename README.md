@@ -224,6 +224,18 @@ const pool = korm.pool()
   .open();
 ```
 
+- Postgres layer config accepts either a URL string or a typed options object:
+
+```ts
+const pgLayer = korm.layers.pg({
+  host: "localhost",
+  port: 5432,
+  database: "app",
+  username: "app",
+  password: process.env.PGPASSWORD!
+});
+```
+
 - If you have multiple layers, you must target one with the `from` RN mod.
 - If there is only one layer, you can omit the `from` mod.
 - `pool.close()` closes all layers and depots. If your program never exits, you forgot to call this.
@@ -640,10 +652,21 @@ fish -lc "bun run lint:actions"
 fish -lc "bun run test:unit"
 fish -lc "bun run test:integration"
 fish -lc "bun run test:hostile"
+fish -lc "bun run test:full"
 ```
 
 `test:unit`, `test:integration`, and `test:hostile` run workflow linting
 (`actionlint`) first so workflow issues fail locally before CI.
+
+`test:full` stages Docker test resources, loads the generated env vars, runs
+unit + integration + hostile suites in sequence, then always tears resources
+down and removes the generated env file. It prints a concise end summary
+(status, duration, and failure tails). Suite output files are only written when
+you pass `-o <path>`:
+
+```bash
+fish -lc "bun run test:full -- -o ./.tmp/test-full-suite/latest"
+```
 
 To run integration/hostile tests locally without external services, start the
 Docker resources and load the generated env file:
@@ -663,6 +686,14 @@ Types referenced below live under `korm.types` (for example, `korm.types.RN`).
 
 - `korm.item<T>(pool)` -> `korm.types.UninitializedItem<T>`
 - `korm.rn(str)` -> `korm.types.RN<T>`
+- Layer-facing helper types:
+  - `korm.types.SourceLayer`
+  - `korm.types.PersistOptions`
+  - `korm.types.DbChangeResult<T>`
+  - `korm.types.DbDeleteResult`
+  - `korm.types.ColumnKind`
+  - `korm.types.PgConnectionInput` / `korm.types.PgConnectionOptions`
+  - `korm.types.MysqlConnectionInput` / `korm.types.MysqlConnectionOptions`
 - `korm.file({ rn, file })` -> `FloatingDepotFile`
 - `korm.layers.sqlite(path)` / `pg(urlOrOptions)` / `mysql(...)`
 - `korm.qfns` -> `{ eq, and, or, not, gt, gte, lt, lte, like, inList }`

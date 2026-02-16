@@ -42,7 +42,10 @@ export interface SourceLayer {
   ): Promise<Result<Item<T>[]>>;
   /** Ensure tables/columns exist for the item shape. */
   ensureTables(
-    item: Item<any> | FloatingItem<any> | UncommittedItem<any>,
+    item:
+      | Item<JSONable>
+      | FloatingItem<JSONable>
+      | UncommittedItem<JSONable>,
     destructive?: boolean,
   ): Promise<string>;
   /** Return column kinds for the namespace/kind table. */
@@ -72,7 +75,7 @@ export type Change =
     }
   | {
       type: "update";
-      oldData: any;
+      oldData: JSONable;
       rn: RN;
       pool: LayerPool;
     };

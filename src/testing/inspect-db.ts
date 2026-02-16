@@ -41,6 +41,11 @@ for (const arg of process.argv.slice(2)) {
 const limit = Number(args.get("limit") || "3");
 const tableArg = args.get("table") || "";
 const matchArg = args.get("match") || "";
+type TableNameRow = {
+  table_name?: string;
+  TABLE_NAME?: string;
+  name?: string;
+};
 
 function shouldInclude(name: string): boolean {
   if (tableArg) return name === tableArg;
@@ -65,9 +70,8 @@ async function inspectPg(): Promise<void> {
   );
 
   console.log(`[pg] tables: ${rows.length}`);
-  for (const row of rows as any[]) {
-    const name =
-      (row as any).table_name ?? (row as any).TABLE_NAME ?? (row as any).name;
+  for (const row of rows as TableNameRow[]) {
+    const name = row.table_name ?? row.TABLE_NAME ?? row.name;
     if (!name) continue;
     if (!shouldInclude(name)) continue;
     const safe = quoteIdent(name, '"');
@@ -82,7 +86,7 @@ async function inspectPg(): Promise<void> {
     const countRows = await pg._db.unsafe<{ cnt: number }[]>(
       `SELECT COUNT(*)::int as cnt FROM ${safe}`,
     );
-    const sampleRows = await pg._db.unsafe<any[]>(
+    const sampleRows = await pg._db.unsafe<Record<string, unknown>[]>(
       `SELECT * FROM ${safe} LIMIT ${limit}`,
     );
 
@@ -102,10 +106,9 @@ async function inspectMysql(): Promise<void> {
         `,
   );
 
-  console.log(`[mysql] tables: ${(rows as any[]).length}`);
-  for (const row of rows as any[]) {
-    const name =
-      (row as any).table_name ?? (row as any).TABLE_NAME ?? (row as any).name;
+  console.log(`[mysql] tables: ${(rows as TableNameRow[]).length}`);
+  for (const row of rows as TableNameRow[]) {
+    const name = row.table_name ?? row.TABLE_NAME ?? row.name;
     if (!name) continue;
     if (!shouldInclude(name)) continue;
     const safe = quoteIdent(name, "`");
@@ -115,15 +118,16 @@ async function inspectMysql(): Promise<void> {
       `SELECT column_name, data_type, column_type FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? ORDER BY ordinal_position`,
       [name],
     );
-    const [countRows] = await mysql._pool.query<any[]>(
+    const [countRows] = await mysql._pool.query<RowDataPacket[]>(
       `SELECT COUNT(*) as cnt FROM ${safe}`,
     );
-    const [sampleRows] = await mysql._pool.query<any[]>(
+    const [sampleRows] = await mysql._pool.query<RowDataPacket[]>(
       `SELECT * FROM ${safe} LIMIT ${limit}`,
     );
+    const countRow = countRows[0] as (RowDataPacket & { cnt?: number }) | undefined;
 
     console.log(`[mysql] ${name} columns:`, columns);
-    console.log(`[mysql] ${name} count:`, (countRows as any[])[0]?.cnt ?? 0);
+    console.log(`[mysql] ${name} count:`, countRow?.cnt ?? 0);
     console.log(`[mysql] ${name} sample:`, sampleRows);
   }
 }

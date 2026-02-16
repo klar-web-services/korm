@@ -3,12 +3,23 @@ import { getBunGlobal, isBunRuntime } from "./engine";
 
 const runtimeRequire = createRequire(import.meta.url);
 
+type PostgresCustomTypeMap = Record<string, import("postgres").PostgresType>;
+type NodePgConnectionOptions = import("postgres").Options<PostgresCustomTypeMap>;
+type BunSqlConnectionInput =
+  typeof globalThis extends { Bun: { SQL: new (connection: infer T) => unknown } }
+    ? T
+    : never;
+type BunPgConnectionOptions = Extract<BunSqlConnectionInput, Record<string, unknown>>;
+
 /**
  * Postgres connection options accepted by runtime adapters.
+ * Includes typed postgres.js options and Bun SQL object options.
  * Use a connection URL for portability, or pass engine-native options.
  * Next: pass to `korm.layers.pg(...)`.
  */
-export type PgConnectionOptions = Record<string, unknown>;
+export type PgConnectionOptions =
+  | (NodePgConnectionOptions & Record<string, unknown>)
+  | (BunPgConnectionOptions & Record<string, unknown>);
 
 /**
  * Input accepted by the Postgres adapter.
@@ -40,7 +51,7 @@ type PostgresSqlLike = {
   end: (opts?: { timeout?: number }) => Promise<void>;
 };
 type PostgresFactory = (
-  input?: string | Record<string, unknown>,
+  input?: string | NodePgConnectionOptions,
 ) => PostgresSqlLike;
 
 function loadPostgresFactory(): PostgresFactory {
@@ -58,7 +69,9 @@ function loadPostgresFactory(): PostgresFactory {
 function createNodePgClient(input: PgConnectionInput): PgClient {
   const postgres = loadPostgresFactory();
   const sql =
-    typeof input === "string" ? postgres(input) : postgres(input as any);
+    typeof input === "string"
+      ? postgres(input)
+      : postgres(input as NodePgConnectionOptions);
   return {
     unsafe: <T = unknown>(query: string, values?: unknown[]) =>
       sql.unsafe<T>(query, values),
@@ -72,8 +85,10 @@ function createBunPgClient(input: PgConnectionInput): PgClient {
   if (!bun?.SQL) {
     throw new Error("Bun runtime detected but Bun.SQL is unavailable.");
   }
-  const SQLCtor = bun.SQL as unknown as new (connection: unknown) => BunSqlLike;
-  const sql = new SQLCtor(input as any);
+  const SQLCtor = bun.SQL as unknown as new (
+    connection: BunSqlConnectionInput,
+  ) => BunSqlLike;
+  const sql = new SQLCtor(input as BunSqlConnectionInput);
   return {
     unsafe: <T = unknown>(query: string, values?: unknown[]) =>
       values === undefined

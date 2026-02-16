@@ -410,9 +410,15 @@ export class PgLayer implements SourceLayer {
       }
     }
 
-    const opts = connectionStringOrOptions as any;
-    const db = opts.database || opts.db || "pg";
-    const host = opts.hostname || opts.host || "localhost";
+    const opts = connectionStringOrOptions as Record<string, unknown>;
+    const rawDb = opts.database ?? opts.db;
+    const rawHost = opts.hostname ?? opts.host;
+    const db =
+      typeof rawDb === "string" && rawDb.trim().length > 0 ? rawDb : "pg";
+    const host =
+      typeof rawHost === "string" && rawHost.trim().length > 0
+        ? rawHost
+        : "localhost";
     return `${db}@${host}`;
   }
 
@@ -429,7 +435,10 @@ export class PgLayer implements SourceLayer {
     return `${query} /* korm_schema:${this._schemaVersion} */`;
   }
 
-  private _unsafe<T = any>(query: string, values?: any[]): Promise<T> {
+  private _unsafe<T = unknown>(
+    query: string,
+    values?: unknown[],
+  ): Promise<T> {
     const stamped = this._withSchemaVersion(query);
     if (values === undefined) {
       return this._db.unsafe<T>(stamped);
@@ -916,9 +925,10 @@ export class PgLayer implements SourceLayer {
     const rawTableName = `__items__${item.rn!.namespace!}__${item.rn!.kind!}`;
     let tableInfo = await this._getTableInfo(rawTableName);
     const currentRow = (
-      await this._unsafe(`SELECT * FROM ${safeTableName} WHERE "rnId" = $1`, [
-        item.rn!.id!,
-      ])
+      await this._unsafe<Array<Record<string, unknown>>>(
+        `SELECT * FROM ${safeTableName} WHERE "rnId" = $1`,
+        [item.rn!.id!],
+      )
     )[0];
     if (!currentRow) {
       const rnValue = item.rn?.value() ?? "(unknown rn)";
@@ -1016,9 +1026,10 @@ export class PgLayer implements SourceLayer {
     if (tableInfo.length === 0) return undefined;
     const safeTableName = this._quoteIdent(rawTableName);
     const currentRow = (
-      await this._unsafe(`SELECT * FROM ${safeTableName} WHERE "rnId" = $1`, [
-        rn.id!,
-      ])
+      await this._unsafe<Array<Record<string, unknown>>>(
+        `SELECT * FROM ${safeTableName} WHERE "rnId" = $1`,
+        [rn.id!],
+      )
     )[0];
     if (!currentRow) return undefined;
     if (
@@ -1045,7 +1056,7 @@ export class PgLayer implements SourceLayer {
       };
     }
     const safeTableName = this._quoteIdent(rawTableName);
-    const existing = await this._unsafe(
+    const existing = await this._unsafe<Array<Record<string, number>>>(
       `SELECT 1 FROM ${safeTableName} WHERE "rnId" = $1`,
       [rn.id!],
     );
@@ -1284,7 +1295,7 @@ export class PgLayer implements SourceLayer {
 
   /** @inheritdoc */
   async executeQuery<T extends JSONable>(
-    query: QueryBuilder<any>,
+    query: QueryBuilder<T>,
   ): Promise<Result<Item<T>[]>> {
     const tableName = `__items__${query.rn!.namespace!}__${query.rn!.kind!}`;
 
@@ -1421,14 +1432,18 @@ export class PgLayer implements SourceLayer {
 
   /** @inheritdoc */
   async ensureTables(
-    item: Item<any> | FloatingItem<any> | UncommittedItem<any>,
+    item:
+      | Item<JSONable>
+      | FloatingItem<JSONable>
+      | UncommittedItem<JSONable>,
     destructive: boolean = false,
   ): Promise<string> {
     const rawTableName = `__items__${item.rn!.namespace!}__${item.rn!.kind!}`;
     const tableName = this._quoteIdent(rawTableName);
+    const itemData = (item.data ?? {}) as Record<string, JSONable>;
     await this._ensureDomains();
 
-    const existsRes = await this._unsafe(
+    const existsRes = await this._unsafe<Array<{ e?: boolean; exists?: boolean }>>(
       `SELECT EXISTS (
                 SELECT 1
                 FROM information_schema.tables
@@ -1441,9 +1456,9 @@ export class PgLayer implements SourceLayer {
     if (!exists) {
       let createString = `CREATE TABLE IF NOT EXISTS ${tableName} ( "rnId" TEXT PRIMARY KEY, `;
 
-      for (const key in item.data) {
+      for (const key in itemData) {
         const columnName = this._quoteIdent(key);
-        const v = (item.data as any)[key];
+        const v = itemData[key];
 
         const t = this._inferPgTypeFromValue(v);
         if (t === "TEXT") createString += `${columnName} TEXT, `;
@@ -1464,8 +1479,8 @@ export class PgLayer implements SourceLayer {
 
       await this._unsafe(createString);
       if (!this._domainsAvailable) {
-        for (const key in item.data) {
-          const v = (item.data as any)[key];
+        for (const key in itemData) {
+          const v = itemData[key];
           const kind = this._inferColumnKindFromValue(v);
           await this._setColumnKind(rawTableName, key, kind);
         }
@@ -1479,10 +1494,10 @@ export class PgLayer implements SourceLayer {
     const columns = await this._getTableInfo(rawTableName);
     let schemaChanged = false;
 
-    for (const key in item.data) {
+    for (const key in itemData) {
       const rawColumnName = key;
       const columnName = this._quoteIdent(rawColumnName);
-      const v = (item.data as any)[key];
+      const v = itemData[key];
 
       if (v === undefined) continue;
 

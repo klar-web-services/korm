@@ -142,7 +142,7 @@ class ThrowOnceLayer implements SourceLayer {
   }
 
   async executeQuery<T extends JSONable>(query: QueryBuilder<T>) {
-    return await this.inner.executeQuery<T>(query as QueryBuilder<JSONable>);
+    return await this.inner.executeQuery<T>(query);
   }
 
   async ensureTables(

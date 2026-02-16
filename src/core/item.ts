@@ -70,7 +70,7 @@ type ItemShowOptions = {
   what?: "data" | "rn" | "full";
 };
 
-function isPlainObject(item: unknown): item is Record<string, any> {
+function isPlainObject(item: unknown): item is Record<string, unknown> {
   if (!item || typeof item !== "object") return false;
   const proto = Object.getPrototypeOf(item);
   return proto === Object.prototype || proto === null;
@@ -84,9 +84,9 @@ function deepMerge<T>(target: T, source: DeepPartial<T>): T {
     return source as T;
   }
 
-  const targetObj = target as Record<string, any>;
-  const sourceObj = source as Record<string, any>;
-  const output: Record<string, any> = {};
+  const targetObj = target as Record<string, unknown>;
+  const sourceObj = source as Record<string, unknown>;
+  const output: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(targetObj)) {
     safeAssign(output, key, value);
   }
@@ -114,8 +114,8 @@ function mergeInto<T>(target: T, source: DeepPartial<T>): T {
   if (!isPlainObject(target) || !isPlainObject(source)) {
     return source as T;
   }
-  const targetObj = target as Record<string, any>;
-  const sourceObj = source as Record<string, any>;
+  const targetObj = target as Record<string, unknown>;
+  const sourceObj = source as Record<string, unknown>;
   Object.keys(sourceObj).forEach((key) => {
     const sVal = sourceObj[key];
     if (isUnsafeObjectKey(key)) {

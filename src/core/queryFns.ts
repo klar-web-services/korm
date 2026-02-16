@@ -4,7 +4,7 @@ import type { _QueryComparison, _QueryComponent } from "./query";
  * Equality comparison on a JSON path.
  * Use with `QueryBuilder.where(...)`.
  */
-export function eq(prop: string, val: any): _QueryComparison {
+export function eq(prop: string, val: unknown): _QueryComparison {
     return {
         type: "comparison",
         operator: "=",
@@ -49,7 +49,7 @@ export function not(component: _QueryComponent): _QueryComponent {
 /**
  * Greater-than comparison on a JSON path.
  */
-export function gt(prop: string, val: any): _QueryComparison {
+export function gt(prop: string, val: unknown): _QueryComparison {
     return {
         type: "comparison",
         operator: ">",
@@ -61,7 +61,7 @@ export function gt(prop: string, val: any): _QueryComparison {
 /**
  * Greater-than-or-equal comparison on a JSON path.
  */
-export function gte(prop: string, val: any): _QueryComparison {
+export function gte(prop: string, val: unknown): _QueryComparison {
     return {
         type: "comparison",
         operator: ">=",
@@ -73,7 +73,7 @@ export function gte(prop: string, val: any): _QueryComparison {
 /**
  * Less-than comparison on a JSON path.
  */
-export function lt(prop: string, val: any): _QueryComparison {
+export function lt(prop: string, val: unknown): _QueryComparison {
     return {
         type: "comparison",
         operator: "<",
@@ -85,7 +85,7 @@ export function lt(prop: string, val: any): _QueryComparison {
 /**
  * Less-than-or-equal comparison on a JSON path.
  */
-export function lte(prop: string, val: any): _QueryComparison {
+export function lte(prop: string, val: unknown): _QueryComparison {
     return {
         type: "comparison",
         operator: "<=",
@@ -98,7 +98,7 @@ export function lte(prop: string, val: any): _QueryComparison {
  * SQL LIKE-style comparison on a JSON path.
  * Use `%` and `_` wildcards.
  */
-export function like(prop: string, val: any): _QueryComparison {
+export function like(prop: string, val: unknown): _QueryComparison {
     return {
         type: "comparison",
         operator: "LIKE",
@@ -111,7 +111,7 @@ export function like(prop: string, val: any): _QueryComparison {
  * SQL IN-style comparison on a JSON path.
  * Use with `QueryBuilder.where(...)`.
  */
-export function inList(prop: string, values: any[]): _QueryComparison {
+export function inList(prop: string, values: unknown[]): _QueryComparison {
     return {
         type: "comparison",
         operator: "IN",

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { RN } from "../core/rn";
+import type { JSONable } from "../korm";
 import type { Depot } from "../depot/depot";
 import type { SourceLayer } from "./sourceLayer";
 import { WalManager, type WalMode } from "../wal/wal";
@@ -44,7 +45,7 @@ function stableUuidFromSeed(seed: string): string {
 
 /** Error thrown when lock acquisition times out. */
 export class LockTimeoutError extends Error {
-  constructor(rn: RN<any>, timeoutMs: number) {
+  constructor(rn: RN<JSONable>, timeoutMs: number) {
     super(
       `Lock acquisition timed out after ${timeoutMs}ms for RN "${rn.value()}"`,
     );
@@ -93,7 +94,7 @@ export class KormLocker {
   }
 
   private async _acquireShared(
-    rn: RN<any>,
+    rn: RN<JSONable>,
     timeoutMs: number,
   ): Promise<() => void> {
     if (!this._shared) {
@@ -134,7 +135,7 @@ export class KormLocker {
    * @throws LockTimeoutError if the lock cannot be acquired within the timeout.
    */
   async acquire(
-    rn: RN<any>,
+    rn: RN<JSONable>,
     timeoutMs: number = DEFAULT_LOCK_TIMEOUT_MS,
   ): Promise<() => void> {
     const rnString = rn.value();
@@ -203,7 +204,7 @@ export class KormLocker {
    * @param rn The resource name to lock.
    * @returns A release function if the lock was acquired, or `undefined` if already locked.
    */
-  tryAcquire(rn: RN<any>): (() => void) | undefined {
+  tryAcquire(rn: RN<JSONable>): (() => void) | undefined {
     if (this._shared) {
       return undefined;
     }
@@ -227,7 +228,7 @@ export class KormLocker {
   }
 
   /** Check if an RN is currently locked. */
-  isLocked(rn: RN<any>): boolean {
+  isLocked(rn: RN<JSONable>): boolean {
     return this._locks.has(rn.value());
   }
 
@@ -239,7 +240,7 @@ export class KormLocker {
    * @throws LockTimeoutError if any lock cannot be acquired within the timeout.
    */
   async acquireMultiple(
-    rns: RN<any>[],
+    rns: RN<JSONable>[],
     timeoutMs: number = DEFAULT_LOCK_TIMEOUT_MS,
   ): Promise<() => void> {
     // Sort by RN string to ensure consistent lock ordering and prevent deadlocks
