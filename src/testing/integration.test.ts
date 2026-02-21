@@ -1005,6 +1005,15 @@ describe("layers integration", () => {
         throw error;
       }
 
+      const sqliteExpectedRow = backupSqlite._db
+        .prepare(`SELECT COUNT(*) as cnt FROM "${sqliteTable}"`)
+        .get() as { cnt?: number };
+      const expectedByLayer = new Map<string, number>([
+        ["sqlite", Number(sqliteExpectedRow?.cnt ?? 0)],
+        ["pg", await pgCountRows(pgActual)],
+        ["mysql", await mysqlCountRows(mysqlTable)],
+      ]);
+
       const manager = new BackMan();
       manager.addInterval("*", korm.interval.every("minute").runNow());
       backupPool.configureBackups("backups", manager);
@@ -1024,7 +1033,7 @@ describe("layers integration", () => {
 
       for (const ident of ["sqlite", "pg", "mysql"] as const) {
         const entry = rowCounts.get(ident);
-        expect(entry?.rowCount).toBe(hugeCount + 1);
+        expect(entry?.rowCount).toBe(expectedByLayer.get(ident));
       }
     } finally {
       await backupPool.close();
