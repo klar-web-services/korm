@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.3
+
+Fixes the published `generate-encryption-key` CLI bin so it executes correctly in client projects across Node and Bun.
+
+**Runtime**
+- Updated `scripts/generate_encryption_key.js` with a portable launcher prelude that dispatches to Node when available (and falls back to Bun), preventing `ENOEXEC` from direct `node_modules/.bin` execution.
+
+**Testing**
+- Added a regression test that executes the script directly to ensure the CLI bin remains runnable (`src/runtime/binScripts.unit.test.ts`).
+
 ## 1.4.2
 
 Restores Postgres layer config IntelliSense by replacing the loose object type with concrete option typings.

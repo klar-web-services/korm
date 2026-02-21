@@ -14,7 +14,7 @@
       "import": "./dist/index.js"
     }
   },
-  "version": "1.4.2",
+  "version": "1.4.3",
   "scripts": {
     "build": "bun build ./index.ts --outdir ./dist --target node --format esm --external argon2 --external mysql2 --external better-sqlite3 --external postgres --external @aws-sdk/client-s3 && bun run build:types",
     "build:types": "tsc -p tsconfig.build.json",

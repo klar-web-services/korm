@@ -1,3 +1,6 @@
+#!/bin/sh
+':' //; if command -v node >/dev/null 2>&1; then exec node "$0" "$@"; fi; exec bun "$0" "$@"
+
 import { randomBytes } from 'node:crypto';
 
 const newKey = randomBytes(32).toString("hex");
