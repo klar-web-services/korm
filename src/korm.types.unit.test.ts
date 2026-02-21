@@ -2,6 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { korm } from "./korm";
 
 describe("korm.types exports", () => {
+  test("korm.unique returns a unique wrapper", () => {
+    const wrapped = korm.unique({ b: 2, a: 1 });
+    expect(wrapped.__UNIQUE__).toBe(true);
+    expect(wrapped.value()).toEqual({ a: 1, b: 2 });
+    expect(typeof wrapped.fingerprint()).toBe("string");
+  });
+
   test("exposes layer-oriented public type aliases", () => {
     const value = "ok";
     expect(value).toBe("ok");
@@ -18,6 +25,7 @@ if (false) {
   type PgConnectionOptions = korm.types.PgConnectionOptions;
   type MysqlConnectionInput = korm.types.MysqlConnectionInput;
   type MysqlConnectionOptions = korm.types.MysqlConnectionOptions;
+  type Unique<T extends korm.types.JSONable> = korm.types.Unique<T>;
 
   const pgUrl: PgConnectionInput = "postgres://localhost:5432/app";
   const pgOpts: PgConnectionOptions = {
@@ -41,12 +49,14 @@ if (false) {
     _result: DbChangeResult<{ value: string }>,
   ): void => {};
   const acceptsColumnKind = (_kind: ColumnKind): void => {};
+  const acceptsUnique = (_value: Unique<string>): void => {};
 
   void acceptsSourceLayer;
   void acceptsPersistOptions;
   void acceptsDeleteResult;
   void acceptsChangeResult;
   void acceptsColumnKind;
+  void acceptsUnique;
   void pgUrl;
   void pgOpts;
   void myUrl;

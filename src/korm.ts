@@ -24,6 +24,7 @@ import {
 } from "./core/queryFns";
 import { tx } from "./core/txBuilder";
 import { Encrypt } from "./security/encryption";
+import { Unique } from "./core/unique";
 import type { WalMode } from "./wal/wal";
 import type { LockMode } from "./sources/lockStore";
 import {
@@ -693,6 +694,15 @@ const korm = {
     return encrypt;
   },
 
+  /**
+   * Mark a value as unique within its namespace/kind column.
+   * For nested objects, korm canonicalizes key order before uniqueness fingerprinting.
+   * Next: use this in `from.data({ data: { ... } })` values for fields typed as `korm.types.Unique<T>`.
+   */
+  unique<T extends JSONable>(value: T): Unique<T> {
+    return new Unique(value);
+  },
+
   /** Create a transaction builder for FloatingItem and UncommittedItem values. */
   tx: tx,
   /** Create a LayerPool from layers/depots and optional WAL settings. */
@@ -1035,6 +1045,12 @@ export namespace korm {
      */
     export type Password<T extends JSONable> =
       import("./security/encryption").Password<T>;
+    /**
+     * Wrapper type for values that must be unique per namespace/kind column.
+     * Represents canonicalized values tracked with deterministic uniqueness fingerprints.
+     * Next: create values via `korm.unique(...)`.
+     */
+    export type Unique<T extends JSONable> = import("./core/unique").Unique<T>;
     /**
      * File-storage backend interface used by depots.
      * Represents the read/write/list/delete contract consumed by depot workflows.

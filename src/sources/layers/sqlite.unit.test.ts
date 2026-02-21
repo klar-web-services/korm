@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { RN } from "../../core/rn";
+import { Unique } from "../../core/unique";
 import { SqliteLayer } from "./sqlite";
 
 const UUID = "3dd91ede-37a4-4c25-a86a-6f1a9e132186";
@@ -110,5 +111,37 @@ describe("SqliteLayer helpers", () => {
     const third = layer._getTableInfo("__items__users__basic");
     expect(third).toEqual([{ name: "rnId", type: "ID_TEXT" }]);
     expect(prepareCalls).toBe(2);
+  });
+
+  test("ensureTables creates unique shadow columns and indexes", async () => {
+    const runs: string[] = [];
+    const layer = makeSqliteLayer({
+      _db: {
+        run: (sql: string) => {
+          runs.push(sql);
+        },
+        close: () => {},
+        prepare: () => ({
+          get: () => ({ e: 0 }),
+          all: () => [],
+        }),
+      },
+    }) as any;
+
+    const rn = RN.create("cars", "basic", UUID).unwrap();
+    const rawTable = await layer.ensureTables(
+      {
+        rn,
+        data: {
+          make: "Toyota",
+          vin: new Unique("vin-1"),
+        },
+      },
+      false,
+    );
+
+    expect(rawTable).toBe("__items__cars__basic");
+    expect(runs.some((sql) => sql.includes("__korm_unique__vin"))).toBe(true);
+    expect(runs.some((sql) => sql.includes("CREATE UNIQUE INDEX"))).toBe(true);
   });
 });

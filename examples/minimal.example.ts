@@ -13,6 +13,7 @@ type User = {
 type Car = {
   make: string;
   model: string;
+  uniqueVin: korm.types.Unique<string>;
   owner: korm.types.RN<User>;
 };
 
@@ -38,6 +39,7 @@ const car = (
       data: {
         make: "Citroen",
         model: "C4",
+        uniqueVin: korm.unique("VF7NCD5FS9A123456"),
         owner: user.rn!,
       },
     })

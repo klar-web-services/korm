@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.0
+
+Adds field-level uniqueness wrappers with deterministic nested-object handling across SQLite, Postgres, and MySQL.
+
+**Core API**
+- Added `korm.unique(value)` plus `korm.types.Unique<T>` for uniqueness-constrained model fields (`src/korm.ts`, `src/core/unique.ts`).
+
+**Runtime**
+- Implemented uniqueness enforcement in all SQL layers using hidden `__korm_unique__*` fingerprint columns and unique indexes (`src/sources/layers/{sqlite,pg,mysql}.ts`).
+- Canonicalized nested-object keys before fingerprinting so semantically equal objects with different key order collide as expected for uniqueness (`src/core/unique.ts`).
+- Rehydrated unique fields back into `Unique<T>` wrappers on reads and updated duplicate-constraint error messaging to report unique-field violations.
+
+**Testing**
+- Added unit coverage for unique canonicalization/fingerprinting and layer unique-schema behavior (`src/core/unique.unit.test.ts`, `src/sources/layers/{sqlite,pg,mysql}.unit.test.ts`).
+- Added integration coverage that verifies duplicate rejection and nested-object uniqueness parity across SQLite/Postgres/MySQL (`src/testing/integration.test.ts`).
+
+**Docs**
+- Documented the new unique-field API and behavior in `README.md`, `examples/minimal.example.ts`, and `examples/maximal.example.ts`.
+- Updated implementation primer references for unique wrappers and SQL-layer uniqueness handling (`BOT.md`).
+
 ## 1.4.3
 
 Fixes the published `generate-encryption-key` CLI bin so it executes correctly in client projects across Node and Bun.

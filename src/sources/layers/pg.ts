@@ -26,7 +26,12 @@ import {
 } from "../../core/encryptionMeta";
 import type { ColumnKind } from "../../core/columnKind";
 import { RN } from "../../core/rn";
+import {
+  Unique,
+  fingerprintUniqueValue,
+} from "../../core/unique";
 import { safeAssign } from "../../core/safeObject";
+import { createHash } from "node:crypto";
 import {
   BACKUP_EXTENSION,
   buildBackupHeaderEvent,
@@ -40,6 +45,7 @@ import {
 const PG_RN_DOMAIN = "korm_rn_ref_text";
 const PG_ENCRYPTED_DOMAIN = "korm_encrypted_json";
 const PG_META_TABLE = "__korm_meta__";
+const PG_UNIQUE_SHADOW_PREFIX = "__korm_unique__";
 
 type ColumnInfo = {
   name: string;
@@ -538,11 +544,88 @@ export class PgLayer implements SourceLayer {
     return typeof value === "string" && value.startsWith("[rn]");
   }
 
+  private _uniqueShadowColumnName(columnName: string): string {
+    return `${PG_UNIQUE_SHADOW_PREFIX}${columnName}`;
+  }
+
+  private _baseColumnNameFromUniqueShadow(
+    columnName: string,
+  ): string | undefined {
+    if (!columnName.startsWith(PG_UNIQUE_SHADOW_PREFIX)) return undefined;
+    const base = columnName.slice(PG_UNIQUE_SHADOW_PREFIX.length);
+    return base.length > 0 ? base : undefined;
+  }
+
+  private _isUniqueShadowColumn(columnName: string): boolean {
+    return this._baseColumnNameFromUniqueShadow(columnName) !== undefined;
+  }
+
+  private _getUniqueColumnsFromTableInfo(tableInfo: ColumnInfo[]): Set<string> {
+    const uniqueColumns = new Set<string>();
+    for (const column of tableInfo) {
+      const base = this._baseColumnNameFromUniqueShadow(column.name);
+      if (!base) continue;
+      uniqueColumns.add(base);
+    }
+    return uniqueColumns;
+  }
+
+  private _isUniqueValue(value: any): value is Unique<JSONable> {
+    return Boolean(
+      value &&
+      typeof value === "object" &&
+      value.__UNIQUE__ === true &&
+      typeof value.value === "function" &&
+      typeof value.fingerprint === "function",
+    );
+  }
+
+  private _unwrapUniqueValue(value: any): any {
+    if (!this._isUniqueValue(value)) return value;
+    return value.value();
+  }
+
+  private _fingerprintForUniqueValue(value: any): string | null {
+    const unwrapped = this._unwrapUniqueValue(value);
+    if (unwrapped === null || unwrapped === undefined) return null;
+    if (this._isUniqueValue(value)) return value.fingerprint();
+    return fingerprintUniqueValue(unwrapped as JSONable);
+  }
+
+  private _uniqueShadowIndexName(
+    rawTableName: string,
+    columnName: string,
+  ): string {
+    const digest = createHash("sha256")
+      .update(`${rawTableName}:${columnName}`)
+      .digest("hex")
+      .slice(0, 24);
+    return `__korm_u_${digest}`;
+  }
+
+  private async _ensureUniqueShadowIndex(
+    rawTableName: string,
+    columnName: string,
+  ): Promise<void> {
+    const safeTableName = this._quoteIdent(rawTableName);
+    const safeIndexName = this._quoteIdent(
+      this._uniqueShadowIndexName(rawTableName, columnName),
+    );
+    const safeShadowColumn = this._quoteIdent(
+      this._uniqueShadowColumnName(columnName),
+    );
+    await this._unsafe(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${safeIndexName} ON ${safeTableName} (${safeShadowColumn})`,
+    );
+  }
+
   private _inferColumnKindFromValue(value: any): ColumnKind {
-    if (this._isEncryptValue(value) || this._isEncryptedPayload(value))
+    const normalized = this._unwrapUniqueValue(value);
+    if (this._isEncryptValue(normalized) || this._isEncryptedPayload(normalized))
       return "encrypted";
-    if (this._isRnValue(value) || this._looksLikeRnString(value)) return "rn";
-    if (value !== null && typeof value === "object") return "json";
+    if (this._isRnValue(normalized) || this._looksLikeRnString(normalized))
+      return "rn";
+    if (normalized !== null && typeof normalized === "object") return "json";
     return "scalar";
   }
 
@@ -656,26 +739,27 @@ export class PgLayer implements SourceLayer {
   }
 
   private _inferPgTypeFromValue(v: any): string {
-    if (v === null) return "TEXT";
-    if (v === undefined) return "TEXT";
-    if (this._isRnValue(v) || this._looksLikeRnString(v)) {
+    const value = this._unwrapUniqueValue(v);
+    if (value === null) return "TEXT";
+    if (value === undefined) return "TEXT";
+    if (this._isRnValue(value) || this._looksLikeRnString(value)) {
       return this._domainsAvailable ? PG_RN_DOMAIN : "TEXT";
     }
-    if (this._isEncryptValue(v) || this._isEncryptedPayload(v)) {
+    if (this._isEncryptValue(value) || this._isEncryptedPayload(value)) {
       return this._domainsAvailable ? PG_ENCRYPTED_DOMAIN : "JSONB";
     }
 
-    switch (typeof v) {
+    switch (typeof value) {
       case "string":
         return "TEXT";
       case "boolean":
         return "BOOLEAN";
       case "number":
-        return Number.isInteger(v) ? "INTEGER" : "DOUBLE PRECISION";
+        return Number.isInteger(value) ? "INTEGER" : "DOUBLE PRECISION";
       case "object":
         return "JSONB";
       default:
-        throw new Error("Unsupported type: " + typeof v);
+        throw new Error("Unsupported type: " + typeof value);
     }
   }
 
@@ -698,8 +782,9 @@ export class PgLayer implements SourceLayer {
   }
 
   private _encodePgValue(v: any): any {
-    if (this._isRnValue(v)) return v.value();
-    const normalized = this._normalizeEncryptedValue(v);
+    const unwrapped = this._unwrapUniqueValue(v);
+    if (this._isRnValue(unwrapped)) return unwrapped.value();
+    const normalized = this._normalizeEncryptedValue(unwrapped);
     if (normalized === undefined) return null;
     if (normalized === null) return null;
     if (typeof normalized === "object") return normalized;
@@ -749,6 +834,7 @@ export class PgLayer implements SourceLayer {
     tableInfo: ColumnInfo[],
     opts: { decryptEncrypted?: boolean; encryptionMeta?: EncryptionMeta } = {},
   ): Promise<T> {
+    const uniqueColumns = this._getUniqueColumnsFromTableInfo(tableInfo);
     const typeByName = new Map(
       tableInfo.map((c) => [
         c.name,
@@ -761,6 +847,7 @@ export class PgLayer implements SourceLayer {
     );
     const out: any = {};
     for (const [key, value] of Object.entries(row)) {
+      if (this._isUniqueShadowColumn(key)) continue;
       safeAssign(out, key, value);
     }
     const decryptEncrypted = opts.decryptEncrypted ?? true;
@@ -806,6 +893,16 @@ export class PgLayer implements SourceLayer {
           }
         }
         safeAssign(out, k, parsed);
+      }
+
+      const decodedValue = out[k];
+      if (
+        uniqueColumns.has(k) &&
+        decodedValue !== undefined &&
+        decodedValue !== null &&
+        !this._isUniqueValue(decodedValue)
+      ) {
+        safeAssign(out, k, new Unique(decodedValue as JSONable));
       }
     }
 
@@ -864,14 +961,26 @@ export class PgLayer implements SourceLayer {
     }
 
     const keys = Object.keys(item.data as Record<string, any>);
+    const rawTableName = `__items__${item.rn!.namespace!}__${item.rn!.kind!}`;
+    const tableInfo = await this._getTableInfo(rawTableName, { force: true });
+    const uniqueColumns = this._getUniqueColumnsFromTableInfo(tableInfo);
+    for (const key of keys) {
+      if (this._isUniqueValue((item.data as any)[key])) {
+        uniqueColumns.add(key);
+      }
+    }
+    const uniqueKeys = keys.filter((key) => uniqueColumns.has(key));
 
     let insertString = `INSERT INTO ${safeTableName} ( "rnId"`;
     for (const key of keys) {
       insertString += `, ${this._quoteIdent(key)}`;
     }
+    for (const key of uniqueKeys) {
+      insertString += `, ${this._quoteIdent(this._uniqueShadowColumnName(key))}`;
+    }
     insertString += `) VALUES ( $1`;
 
-    for (let i = 0; i < keys.length; i++) {
+    for (let i = 0; i < keys.length + uniqueKeys.length; i++) {
       insertString += `, $${i + 2}`;
     }
     insertString += ` )`;
@@ -879,6 +988,9 @@ export class PgLayer implements SourceLayer {
     const params = [
       item.rn!.id!,
       ...keys.map((k) => this._encodePgValue((item.data as any)[k])),
+      ...uniqueKeys.map((k) =>
+        this._fingerprintForUniqueValue((item.data as any)[k]),
+      ),
     ];
 
     try {
@@ -958,6 +1070,12 @@ export class PgLayer implements SourceLayer {
 
     const data = (item.data ?? {}) as Record<string, any>;
     const keys = Object.keys(data);
+    const uniqueColumns = this._getUniqueColumnsFromTableInfo(tableInfo);
+    for (const key of keys) {
+      if (this._isUniqueValue(data[key])) {
+        uniqueColumns.add(key);
+      }
+    }
     if (keys.length === 0) {
       return {
         revert: () => {},
@@ -973,11 +1091,21 @@ export class PgLayer implements SourceLayer {
       const columnName = this._quoteIdent(key);
       updateString += `${columnName} = $${i++}, `;
     }
+    for (const key of keys) {
+      if (!uniqueColumns.has(key)) continue;
+      const shadowColumnName = this._quoteIdent(
+        this._uniqueShadowColumnName(key),
+      );
+      updateString += `${shadowColumnName} = $${i++}, `;
+    }
     updateString = updateString.slice(0, -2);
     updateString += ` WHERE "rnId" = $${i}`;
 
     const params = [
       ...keys.map((k) => this._encodePgValue(data[k])),
+      ...keys
+        .filter((k) => uniqueColumns.has(k))
+        .map((k) => this._fingerprintForUniqueValue(data[k])),
       item.rn!.id!,
     ];
 
@@ -1088,10 +1216,11 @@ export class PgLayer implements SourceLayer {
     const params: any[] = [];
 
     const normalizeParam = (v: any): any => {
-      if (v === null || v === undefined) return null;
-      if (this._isRnValue(v)) return v.value();
-      if (typeof v === "object") return JSON.stringify(v);
-      return v;
+      const value = this._unwrapUniqueValue(v);
+      if (value === null || value === undefined) return null;
+      if (this._isRnValue(value)) return value.value();
+      if (typeof value === "object") return JSON.stringify(value);
+      return value;
     };
 
     const pushParam = (v: any): string => {
@@ -1106,10 +1235,11 @@ export class PgLayer implements SourceLayer {
       const values: any[] = [];
       let hasNull = false;
       for (const entry of list) {
-        if (entry === null || entry === undefined) {
+        const normalized = this._unwrapUniqueValue(entry);
+        if (normalized === null || normalized === undefined) {
           hasNull = true;
         } else {
-          values.push(entry);
+          values.push(normalized);
         }
       }
       return { values, hasNull };
@@ -1198,6 +1328,7 @@ export class PgLayer implements SourceLayer {
 
     const buildExpr = (node: _QueryComponent): string => {
       if (node.type === "comparison") {
+        const nodeValue = this._unwrapUniqueValue(node.value);
         let lhs: string;
 
         if (node.property.includes(".")) {
@@ -1210,7 +1341,7 @@ export class PgLayer implements SourceLayer {
             `WHEN pg_typeof(${baseIdent}) = 'json'::regtype THEN ${baseIdent} #>> '{${pathStr}}' ` +
             `ELSE NULL END`;
           if (node.operator === "IN") {
-            const { values, hasNull } = normalizeInValues(node.value);
+            const { values, hasNull } = normalizeInValues(nodeValue);
             const valueType = detectInType(values);
             if (valueType === "number") {
               return buildInClause(
@@ -1230,24 +1361,24 @@ export class PgLayer implements SourceLayer {
             }
             return buildInClause(lhs, values, pushParam, hasNull);
           }
-          return buildJsonComparison(lhs, node.operator, node.value);
+          return buildJsonComparison(lhs, node.operator, nodeValue);
         } else {
           lhs = this._quoteIdent(node.property);
         }
 
         if (node.operator === "IN") {
-          const { values, hasNull } = normalizeInValues(node.value);
+          const { values, hasNull } = normalizeInValues(nodeValue);
           return buildInClause(lhs, values, pushParam, hasNull);
         }
 
         const nullComparison = buildNullComparison(
           lhs,
           node.operator,
-          node.value,
+          nodeValue,
         );
         if (nullComparison) return nullComparison;
 
-        return `${lhs} ${node.operator} ${pushParam(node.value)}`;
+        return `${lhs} ${node.operator} ${pushParam(nodeValue)}`;
       }
 
       const parts = node.components
@@ -1374,8 +1505,8 @@ export class PgLayer implements SourceLayer {
     const rnValue = item.rn?.value() ?? "(unknown rn)";
     const baseLayer = `${this.type} source layer '${this.identifier}'`;
     const errorText = String(error);
-    if (op === "create" && errorText.toLowerCase().includes("duplicate key")) {
-      return `Tried to create item '${rnValue}' which already exists in ${baseLayer}.`;
+    if (errorText.toLowerCase().includes("duplicate key")) {
+      return `Failed to ${op} item '${rnValue}' in ${baseLayer}: unique field constraint violated.`;
     }
     return `Failed to ${op} item '${rnValue}' in ${baseLayer}: ${errorText}`;
   }
@@ -1455,10 +1586,12 @@ export class PgLayer implements SourceLayer {
 
     if (!exists) {
       let createString = `CREATE TABLE IF NOT EXISTS ${tableName} ( "rnId" TEXT PRIMARY KEY, `;
+      const uniqueColumns: string[] = [];
 
       for (const key in itemData) {
         const columnName = this._quoteIdent(key);
         const v = itemData[key];
+        const wantsUnique = this._isUniqueValue(v);
 
         const t = this._inferPgTypeFromValue(v);
         if (t === "TEXT") createString += `${columnName} TEXT, `;
@@ -1472,12 +1605,23 @@ export class PgLayer implements SourceLayer {
         else if (t === PG_ENCRYPTED_DOMAIN)
           createString += `${columnName} ${PG_ENCRYPTED_DOMAIN}, `;
         else throw new Error("Unsupported inferred type: " + t);
+
+        if (wantsUnique) {
+          uniqueColumns.push(key);
+          const shadowColumnName = this._quoteIdent(
+            this._uniqueShadowColumnName(key),
+          );
+          createString += `${shadowColumnName} TEXT, `;
+        }
       }
 
       createString = createString.slice(0, -2);
       createString += ` )`;
 
       await this._unsafe(createString);
+      for (const key of uniqueColumns) {
+        await this._ensureUniqueShadowIndex(rawTableName, key);
+      }
       if (!this._domainsAvailable) {
         for (const key in itemData) {
           const v = itemData[key];
@@ -1498,6 +1642,10 @@ export class PgLayer implements SourceLayer {
       const rawColumnName = key;
       const columnName = this._quoteIdent(rawColumnName);
       const v = itemData[key];
+      const shadowRawColumnName = this._uniqueShadowColumnName(rawColumnName);
+      const shadowColumnName = this._quoteIdent(shadowRawColumnName);
+      const hasUniqueShadow = columns.some((c) => c.name === shadowRawColumnName);
+      const wantsUnique = this._isUniqueValue(v) || hasUniqueShadow;
 
       if (v === undefined) continue;
 
@@ -1558,6 +1706,10 @@ export class PgLayer implements SourceLayer {
       if (!existingColumnType) {
         const alterString = `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnWantedType}`;
         await this._unsafe(alterString);
+        columns.push({
+          name: rawColumnName,
+          dataType: columnWantedType,
+        });
         await this._clearPlanCache();
         schemaChanged = true;
       } else if (normalizedExisting !== normalizedWanted) {
@@ -1580,6 +1732,14 @@ export class PgLayer implements SourceLayer {
         await this._unsafe(
           `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnWantedType}`,
         );
+        if (hasUniqueShadow) {
+          await this._unsafe(
+            `ALTER TABLE ${tableName} DROP COLUMN ${shadowColumnName}`,
+          );
+          await this._unsafe(
+            `ALTER TABLE ${tableName} ADD COLUMN ${shadowColumnName} TEXT`,
+          );
+        }
         await this._clearPlanCache();
         schemaChanged = true;
 
@@ -1589,6 +1749,21 @@ export class PgLayer implements SourceLayer {
           "with type",
           columnWantedType,
         );
+      }
+
+      if (wantsUnique) {
+        if (!hasUniqueShadow) {
+          await this._unsafe(
+            `ALTER TABLE ${tableName} ADD COLUMN ${shadowColumnName} TEXT`,
+          );
+          columns.push({
+            name: shadowRawColumnName,
+            dataType: "TEXT",
+          });
+          await this._clearPlanCache();
+          schemaChanged = true;
+        }
+        await this._ensureUniqueShadowIndex(rawTableName, rawColumnName);
       }
       if (!this._domainsAvailable) {
         const kind = this._inferColumnKindFromValue(v);
@@ -1617,6 +1792,7 @@ export class PgLayer implements SourceLayer {
     const map = new Map<string, ColumnKind>();
     if (columns.length === 0) return map;
     for (const col of columns) {
+      if (this._isUniqueShadowColumn(col.name)) continue;
       const dataType = (col.dataType || "").toUpperCase();
       const domain = (col.domainName || col.udtName || "").toLowerCase();
       if (domain === PG_RN_DOMAIN) {

@@ -74,6 +74,16 @@ type Car = {
 };
 type Registration = { carRef: string; active: boolean; note: string };
 type SimpleRecord = { label: string; score: number };
+type UniqueCarRecord = {
+  make: string;
+  model: string;
+  vin: korm.types.Unique<string>;
+  descriptor: korm.types.Unique<{
+    make: string;
+    model: string;
+    tags: string[];
+  }>;
+};
 type SortRecord = {
   label: string;
   score?: number;
@@ -1248,6 +1258,116 @@ describe("layers integration", () => {
           note: updatedExpected.note,
         });
       }
+    });
+  }
+
+  for (const ident of ["sqlite", "pg", "mysql"] as const) {
+    test(`${ident} enforces unique wrapped fields including nested objects`, async () => {
+      const names = makeNames(`unique${ident}`);
+      const tname = tableName(names.namespace, names.kind);
+      const vin = `vin-${makeId(`vin${ident}`)}`;
+
+      const firstRes = await korm
+        .item<UniqueCarRecord>(layerPool)
+        .from.data({
+          namespace: names.namespace,
+          kind: names.kind,
+          mods: fromMod(ident),
+          data: {
+            make: "Toyota",
+            model: "Yaris",
+            vin: korm.unique(vin),
+            descriptor: korm.unique({
+              model: "Yaris",
+              make: "Toyota",
+              tags: ["city", "compact"],
+            }),
+          },
+        })
+        .create();
+      expect(firstRes.isOk()).toBe(true);
+      const first = firstRes.unwrap();
+
+      const duplicateVin = await korm
+        .item<UniqueCarRecord>(layerPool)
+        .from.data({
+          namespace: names.namespace,
+          kind: names.kind,
+          mods: fromMod(ident),
+          data: {
+            make: "Toyota",
+            model: "Corolla",
+            vin: korm.unique(vin),
+            descriptor: korm.unique({
+              make: "Toyota",
+              model: "Corolla",
+              tags: ["city", "sedan"],
+            }),
+          },
+        })
+        .create();
+      expect(duplicateVin.isErr()).toBe(true);
+
+      const duplicateDescriptor = await korm
+        .item<UniqueCarRecord>(layerPool)
+        .from.data({
+          namespace: names.namespace,
+          kind: names.kind,
+          mods: fromMod(ident),
+          data: {
+            make: "Toyota",
+            model: "Yaris",
+            vin: korm.unique(`vin-${makeId(`dup${ident}`)}`),
+            descriptor: korm.unique({
+              tags: ["city", "compact"],
+              make: "Toyota",
+              model: "Yaris",
+            }),
+          },
+        })
+        .create();
+      expect(duplicateDescriptor.isErr()).toBe(true);
+
+      const byRn = await korm.item<UniqueCarRecord>(layerPool).from.rn(first.rn!);
+      expect(byRn.isOk()).toBe(true);
+      const loaded = byRn.unwrap();
+      expect((loaded.data?.vin as any)?.__UNIQUE__).toBe(true);
+      expect((loaded.data?.descriptor as any)?.__UNIQUE__).toBe(true);
+      expect(loaded.data?.vin.value()).toBe(vin);
+      expect(loaded.data?.descriptor.value()).toEqual({
+        make: "Toyota",
+        model: "Yaris",
+        tags: ["city", "compact"],
+      });
+
+      const row = await rowById(ident, tname, first.rn!.id!);
+      expect(typeof row?.__korm_unique__vin).toBe("string");
+      expect(typeof row?.__korm_unique__descriptor).toBe("string");
+      if (ident === "mysql") {
+        expect(String(row?.__korm_unique__vin).length).toBe(128);
+        expect(String(row?.__korm_unique__descriptor).length).toBe(128);
+      }
+
+      if (ident === "pg") {
+        const cols = await pgColumns(tname);
+        expect(cols.has("__korm_unique__vin")).toBe(true);
+        expect(cols.has("__korm_unique__descriptor")).toBe(true);
+      } else if (ident === "mysql") {
+        const cols = await mysqlColumns(tname);
+        expect(cols.has("__korm_unique__vin")).toBe(true);
+        expect(cols.has("__korm_unique__descriptor")).toBe(true);
+      } else {
+        const cols = sqliteColumns(tname);
+        expect(cols.has("__korm_unique__vin")).toBe(true);
+        expect(cols.has("__korm_unique__descriptor")).toBe(true);
+      }
+
+      const all = await queryItems<UniqueCarRecord>(
+        ident,
+        names.namespace,
+        names.kind,
+      );
+      expect(all.length).toBe(1);
     });
   }
 

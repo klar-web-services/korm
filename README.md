@@ -20,6 +20,7 @@ korm is a Unified Data Runtime for Bun and Node.js that treats SQL databases, re
 - Resource Names (RNs) for stable, portable references across layers and depots.
 - Type-safe resolution via `korm.resolve(...)` that turns RN fields into actual objects.
 - Built-in encryption and redaction for sensitive fields.
+- Field-level uniqueness wrappers via `korm.unique(...)`, including deterministic nested-object uniqueness.
 - Depot files (local or S3-compatible) that persist alongside items.
 - Optional undo/redo WAL for crash safety across `create`, `commit`, `delete`, and `tx` (and optionally depot file writes).
 - Optional scheduled backups with retention and restore.
@@ -108,6 +109,7 @@ type User = {
 type Car = {
   make: string;
   model: string;
+  uniqueVin: korm.types.Unique<string>;
   year: number;
   owner: korm.types.RN<User>; // RN reference
   registered: boolean;
@@ -134,6 +136,7 @@ const car = (await korm.item<Car>(pool).from.data({
   data: {
     make: "Citroen",
     model: "C4",
+    uniqueVin: korm.unique("VF7NCD5FS9A123456"),
     year: 2014,
     owner: user.rn!,
     registered: true,
@@ -356,6 +359,34 @@ For unresolved RN columns, returned item data keeps RN values as `korm.types.RN<
 When you resolve an RN and modify the referenced object, korm will persist the changes **in the referenced layer**, while the parent object continues to store the RN string in storage.
 
 This preserves referential integrity and avoids embedding large resolved blobs in unrelated tables.
+
+## Unique fields
+
+Use `korm.types.Unique<T>` in model types and `korm.unique(value)` in item data:
+
+```ts
+type Car = {
+  make: string;
+  model: string;
+  uniqueVin: korm.types.Unique<string>;
+  uniqueMeta: korm.types.Unique<{ make: string; model: string }>;
+};
+```
+
+```ts
+const car = await korm.item<Car>(pool).from.data({
+  namespace: "cars",
+  kind: "suv",
+  data: {
+    make: "Toyota",
+    model: "Yaris",
+    uniqueVin: korm.unique("VF7NCD5FS9A123456"),
+    uniqueMeta: korm.unique({ model: "Yaris", make: "Toyota" }),
+  },
+}).create();
+```
+
+Uniqueness is enforced per namespace/kind column by the SQL layers. For nested objects, korm canonicalizes key order before building the uniqueness fingerprint, so equivalent objects with different key order are treated as duplicates.
 
 ## Depots and files
 
@@ -638,6 +669,7 @@ korm creates tables on demand and infers column types:
 - JSON objects/arrays -> JSON columns
 - RN references -> RN_REF_TEXT (SQLite) or korm_rn_ref_text (Postgres domain)
 - Encrypted fields -> ENCRYPTED_JSON (SQLite) or korm_encrypted_json (Postgres domain)
+- Unique fields -> hidden `__korm_unique__<column>` fingerprint columns with unique indexes
 
 MySQL stores column kinds in a metadata table (`__korm_meta__`). Long table names are shortened using a deterministic hash to fit MySQL's 64-character limit.
 
@@ -692,6 +724,7 @@ Types referenced below live under `korm.types` (for example, `korm.types.RN`).
   - `korm.types.DbChangeResult<T>`
   - `korm.types.DbDeleteResult`
   - `korm.types.ColumnKind`
+  - `korm.types.Unique<T>`
   - `korm.types.PgConnectionInput` / `korm.types.PgConnectionOptions`
   - `korm.types.MysqlConnectionInput` / `korm.types.MysqlConnectionOptions`
 - `korm.file({ rn, file })` -> `FloatingDepotFile`
@@ -701,6 +734,7 @@ Types referenced below live under `korm.types` (for example, `korm.types.RN`).
 - `korm.first(n?)` -> first-result helper for query reads
 - `korm.sortBy(key, direction?, options?)` -> sort helper for query reads
 - `korm.disallowMissingReferences()` -> strict missing-reference helper
+- `korm.unique(value)` -> unique field wrapper helper
 - `korm.encrypt(value)` / `korm.password(value)`
 - `korm.tx(...items)` -> Tx builder
 - `korm.pool()` -> Pool builder (`setLayers`, `setDepots`, `withMeta`, `withLocks`, `withWal`, `backups`, `open`)

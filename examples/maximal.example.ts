@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import { korm, BackMan } from ".."; // In your app, that would be 'from "@fkws/korm"'
 
 // --- SETUP ---
@@ -99,6 +100,7 @@ type User = {
 type Car = {
   make: string;
   model: string;
+  uniqueVin: korm.types.Unique<string>;
   year: number;
   type: "sedan" | "suv";
   color: string;
@@ -109,6 +111,34 @@ type Car = {
 
 // --- USAGE ---
 // Note: create/commit/tx automatically acquire in-process RN locks; use pool.locker for manual critical sections.
+
+// Quick example: create an item and handle success/error without unwrap().
+type QuickCar = {
+  make: string;
+  model: string;
+  uniqueVin: korm.types.Unique<string>;
+};
+
+const quickCarResult = await korm
+  .item<QuickCar>(pool)
+  .from.data({
+    namespace: "cars",
+    kind: "quickexample",
+    mods: [korm.mods.from("cardb")],
+    data: {
+      make: "Toyota",
+      model: "Yaris",
+      uniqueVin: korm.unique(`quick-vin-${randomUUID()}`),
+    },
+  })
+  .create();
+
+if (quickCarResult.isErr()) {
+  console.error("Quick create failed:", quickCarResult.error);
+} else {
+  const quickCar = quickCarResult.unwrap();
+  console.log("Quick create worked:", quickCar.rn?.value());
+}
 
 // I got a new user for my car management app:
 const newUser = (
@@ -154,6 +184,7 @@ const newCar = (
       data: {
         make: "Citroen",
         model: "C4",
+        uniqueVin: korm.unique("VF7NCD5FS9A123456"),
         year: 2014,
         color: "blue",
         type: "suv",

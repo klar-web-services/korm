@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { and, eq, inList, not } from "../../core/queryFns";
 import { RN } from "../../core/rn";
+import { Unique } from "../../core/unique";
 import { MysqlLayer } from "./mysql";
 
 const UUID = "3dd91ede-37a4-4c25-a86a-6f1a9e132186";
@@ -111,6 +112,40 @@ describe("MysqlLayer helpers", () => {
     );
   });
 
+  test("ensureTables creates unique shadow columns and indexes", async () => {
+    const queries: string[] = [];
+    const layer = makeMysqlLayer({
+      _pool: {
+        query: async (sql: string) => {
+          queries.push(sql);
+          if (sql.includes("COUNT(*) as cnt")) return [[{ cnt: 0 }], {}];
+          if (sql.includes("information_schema.statistics")) {
+            return [[{ cnt: 0 }], {}];
+          }
+          return [[], {}];
+        },
+      },
+      _setColumnKind: async () => {},
+    }) as any;
+
+    const result = await layer.ensureTables(
+      {
+        rn: makeRn(),
+        data: {
+          make: "Toyota",
+          vin: new Unique("vin-1"),
+        },
+      },
+      false,
+    );
+
+    expect(result).toContain("__items__users__basic");
+    expect(queries.some((sql) => sql.includes("__korm_unique__vin"))).toBe(
+      true,
+    );
+    expect(queries.some((sql) => sql.includes("ADD UNIQUE INDEX"))).toBe(true);
+  });
+
   test("ensureTables adds columns and rejects mismatches unless destructive", async () => {
     const addQueries: string[] = [];
     const layer = makeMysqlLayer({
@@ -158,7 +193,7 @@ describe("MysqlLayer helpers", () => {
     const layer = makeMysqlLayer({ identifier: "users@localhost" }) as any;
     const item = { rn: makeRn() };
     expect(layer._friendlyMessage("create", item, "Duplicate entry")).toContain(
-      "already exists",
+      "unique field constraint violated",
     );
     expect(layer._friendlyMessage("update", item, "boom")).toContain(
       "Failed to update item",
