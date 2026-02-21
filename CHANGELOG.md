@@ -18,7 +18,6 @@ Adds field-level uniqueness wrappers with deterministic nested-object handling a
 
 **Docs**
 - Documented the new unique-field API and behavior in `README.md`, `examples/minimal.example.ts`, and `examples/maximal.example.ts`.
-- Updated implementation primer references for unique wrappers and SQL-layer uniqueness handling (`BOT.md`).
 
 ## 1.4.3
 
